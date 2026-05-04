@@ -1,516 +1,387 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { CheckCircle2, AlertCircle, ChevronLeft, ChevronRight, Check } from 'lucide-react';
-import { i18n, Language } from '../translations';
+import { i18n, Language, PACKAGES, PackageId, TIME_SLOTS } from '../translations';
+import { WashTechLogo } from '../components/WashTechLogo';
+
+interface FormData {
+  name: string;
+  phone: string;
+  location: string;
+  package: PackageId | '';
+  date: string;
+  time: string;
+  notes: string;
+}
+
+const EMPTY_FORM: FormData = { name: '', phone: '', location: '', package: '', date: '', time: '', notes: '' };
 
 export default function BookingPage() {
   const [lang, setLang] = useState<Language>('ar');
   const t = i18n[lang];
   const isRtl = t.dir === 'rtl';
-  
-  const [formData, setFormData] = useState({
-    name: '',
-    phone: '',
-    neighborhood: '',
-    carType: '',
-    date: 'today' as 'today' | 'tomorrow',
-    slot: '',
-    gpsLocation: ''
-  });
 
+  const [form, setForm] = useState<FormData>(EMPTY_FORM);
   const [status, setStatus] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle');
-  const [errorMessage, setErrorMessage] = useState('');
-  const [activeSheet, setActiveSheet] = useState<'neighborhood' | 'carType' | 'date' | null>(null);
-  const [availableSlots, setAvailableSlots] = useState<string[] | null>(null);
-  const [isGettingLocation, setIsGettingLocation] = useState(false);
-
-  useEffect(() => {
-    const fetchSlots = () => {
-      fetch('/api/slots')
-        .then(r => r.json())
-        .then(data => {
-          if (data && Array.isArray(data.slots)) {
-            setAvailableSlots(data.slots);
-            // If currently selected slot is no longer available, clear it
-            setFormData(prev => {
-              if (prev.slot && !data.slots.includes(prev.slot)) {
-                return { ...prev, slot: '' };
-              }
-              return prev;
-            });
-          }
-        })
-        .catch(console.error);
-    };
-
-    fetchSlots();
-    const interval = setInterval(fetchSlots, 15000); // Check every 15 seconds
-    return () => clearInterval(interval);
-  }, []);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [locationSheet, setLocationSheet] = useState(false);
+  const [timeSheet, setTimeSheet] = useState(false);
 
   useEffect(() => {
     document.documentElement.dir = t.dir;
     document.documentElement.lang = lang;
   }, [lang, t.dir]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData(prev => ({
-      ...prev,
-      [e.target.name]: e.target.value
-    }));
-  };
+  // Default date to today
+  useEffect(() => {
+    const today = new Date().toISOString().split('T')[0];
+    setForm(f => ({ ...f, date: today }));
+  }, []);
 
-  const handleGetLocation = () => {
-    setIsGettingLocation(true);
-    if ('geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setFormData(prev => ({
-            ...prev,
-            gpsLocation: `${position.coords.latitude},${position.coords.longitude}`
-          }));
-          setIsGettingLocation(false);
-        },
-        (error) => {
-          console.error("Error getting location:", error);
-          alert('Failed to get location. Please allow location access or try again.');
-          setIsGettingLocation(false);
-        }
-      );
-    } else {
-      alert('Geolocation is not supported by your browser');
-      setIsGettingLocation(false);
-    }
-  };
-
-  const isFormValid = formData.name && formData.phone && formData.neighborhood && formData.carType && formData.slot && formData.date && formData.gpsLocation;
+  const isValid = !!(form.name && form.phone && form.location && form.package && form.date && form.time);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isFormValid) return;
+    if (!isValid) return;
     setStatus('submitting');
-    
+    setErrorMsg('');
+    const pkg = PACKAGES[form.package as PackageId];
     try {
-      const response = await fetch('/api/webhook', {
+      const res = await fetch('/api/bookings', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ...formData,
-          language: lang,
-          submittedAt: new Date().toISOString()
+          name: form.name,
+          phone: form.phone,
+          location: form.location,
+          package: form.package,
+          packageNameAr: pkg.nameAr,
+          packagePrice: pkg.price,
+          date: form.date,
+          time: form.time,
+          notes: form.notes,
         }),
       });
-      
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error || 'API proxy error');
-      }
-      
+      if (!res.ok) throw new Error((await res.json()).error || 'Server error');
       setStatus('success');
-      setFormData({ name: '', phone: '', neighborhood: '', carType: '', date: 'today', slot: '', gpsLocation: '' });
-      setErrorMessage('');
-    } catch (error) {
-      console.error('Submission error:', error);
+      setForm(EMPTY_FORM);
+    } catch (err) {
       setStatus('error');
-      setErrorMessage(error instanceof Error ? error.message : 'Unknown error');
+      setErrorMsg(err instanceof Error ? err.message : t.errorMsg);
     }
   };
 
-  const submitTestData = async () => {
-    const testData = {
-      name: 'Test Record',
-      phone: '+9647809471576',
-      neighborhood: t.neighborhoods[0],
-      carType: Object.keys(t.carTypes)[0],
-      date: 'today' as 'today' | 'tomorrow',
-      slot: Object.keys(t.slots)[0],
-      gpsLocation: '36.1901,44.0089'
-    };
-    
-    setFormData(testData);
-    setStatus('submitting');
-    
-    try {
-      const response = await fetch('/api/webhook', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ...testData,
-          language: lang,
-          submittedAt: new Date().toISOString()
-        }),
-      });
-      
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error || 'API proxy error');
-      }
-      
-      setStatus('success');
-      setFormData({ name: '', phone: '', neighborhood: '', carType: '', date: 'today', slot: '', gpsLocation: '' });
-      setErrorMessage('');
-    } catch (error) {
-      console.error('Submission error:', error);
-      setStatus('error');
-      setErrorMessage(error instanceof Error ? error.message : 'Unknown error');
-    }
-  };
-
-  const renderSheet = () => {
-    if (!activeSheet) return null;
-
-    let options: Record<string, string> = {};
-    let title = '';
-    let selectedValue = '';
-    let onSelect = (val: string) => {};
-
-    if (activeSheet === 'neighborhood') {
-      options = Object.fromEntries(t.neighborhoods.map(n => [n, n]));
-      title = t.neighborhoodPlaceholder;
-      selectedValue = formData.neighborhood;
-      onSelect = (val) => setFormData({...formData, neighborhood: val});
-    } else if (activeSheet === 'carType') {
-      options = t.carTypes;
-      title = t.carTypePlaceholder;
-      selectedValue = formData.carType;
-      onSelect = (val) => setFormData({...formData, carType: val});
-    } else if (activeSheet === 'date') {
-      options = { today: t.today, tomorrow: t.tomorrow };
-      title = t.selectDate;
-      selectedValue = formData.date;
-      onSelect = (val) => setFormData({...formData, date: val as 'today' | 'tomorrow'});
-    }
-
-    return (
-      <AnimatePresence>
-        <motion.div 
-          key="backdrop"
-          initial={{ opacity: 0 }} 
-          animate={{ opacity: 1 }} 
-          exit={{ opacity: 0 }} 
-          className="fixed inset-0 lg:absolute bg-black/40 z-[100]" 
-          onClick={() => setActiveSheet(null)}
-        />
-        <motion.div 
-          key="sheet"
-          initial={{ y: '100%' }} 
-          animate={{ y: 0 }} 
-          exit={{ y: '100%' }} 
-          transition={{ type: 'spring', damping: 26, stiffness: 260 }}
-          className="fixed lg:absolute bottom-0 left-0 right-0 max-w-2xl mx-auto bg-[#F2F2F7] rounded-t-3xl z-[101] flex flex-col shadow-[0_-10px_40px_rgba(0,0,0,0.1)] border-t border-white/20 select-none pb-safe"
-          style={{ maxHeight: '85vh' }}
-        >
-          <div className="flex items-center justify-between px-4 py-3.5 bg-[#F2F2F7] rounded-t-3xl shrink-0 border-b border-gray-200/70">
-             <button type="button" onClick={() => setActiveSheet(null)} className="text-[#007AFF] text-[17px] active:opacity-50 w-16 text-start">
-               {t.cancel}
-             </button>
-             <span className="font-semibold text-[17px] text-gray-900 truncate px-2">{title}</span>
-             <button type="button" onClick={() => setActiveSheet(null)} className="text-[#007AFF] text-[17px] font-semibold active:opacity-50 w-16 text-end">
-               {t.done}
-             </button>
-          </div>
-          
-          <div className="overflow-y-auto px-4 py-6 space-y-2">
-            <div className="bg-white rounded-2xl overflow-hidden shadow-sm">
-                {Object.entries(options).map(([key, label], i, arr) => (
-                    <div 
-                        key={key} 
-                        onClick={() => {
-                            onSelect(key);
-                            setTimeout(() => setActiveSheet(null), 100);
-                        }}
-                        className={`flex items-center justify-between px-4 py-3.5 transition-colors active:bg-gray-200 ${i !== arr.length - 1 ? 'border-b border-gray-100' : ''} cursor-pointer hover:bg-gray-50`}
-                    >
-                       <span className={`text-[17px] ${selectedValue === key ? 'text-[#007AFF]' : 'text-gray-900'}`}>{label}</span>
-                       {selectedValue === key && <Check className="w-5 h-5 text-[#007AFF]" />}
-                    </div>
-                ))}
-            </div>
-          </div>
-        </motion.div>
-      </AnimatePresence>
-    );
-  };
+  const selectedPkg = form.package ? PACKAGES[form.package as PackageId] : null;
+  const selectedTime = form.time ? TIME_SLOTS.find(s => s.value === form.time) : null;
+  const timeLabel = selectedTime ? (lang === 'ar' ? selectedTime.labelAr : selectedTime.labelKu) : null;
 
   return (
-    <div className="min-h-screen bg-[#F2F2F7] w-full flex flex-col relative overflow-auto">
-      
-      {/* Luxury Dark Header */}
-      <div className="w-full relative flex flex-col justify-center bg-[#0050B3] z-0 overflow-hidden shrink-0 pt-10 pb-20">
-        <div className="absolute inset-0 bg-gradient-to-b from-[#003B95] to-[#0050B3] z-0 opacity-90" />
-        
-        {/* Top navigation row */}
-        <div className="relative top-0 inset-x-0 flex items-center justify-between px-6 mb-8 z-10 w-full max-w-7xl mx-auto">
-           {/* Language Buttons */}
-           <div className="flex gap-2">
-              <button 
-                 type="button" 
-                 onClick={() => setLang('ar')} 
-                 className={`px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-md ${lang === 'ar' ? 'bg-white text-[#0050B3]' : 'bg-[#003B95] text-white hover:bg-[#0050B3] border border-white/10'}`}
-              >
-                  عربي
-              </button>
-              <button 
-                 type="button" 
-                 onClick={() => setLang('ku')} 
-                 className={`px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-md ${lang === 'ku' ? 'bg-white text-[#0050B3]' : 'bg-[#003B95] text-white hover:bg-[#0050B3] border border-white/10'}`}
-              >
-                 کوردی
-              </button>
-           </div>
-           
-           <div className="flex items-center gap-4 z-10 hidden lg:flex">
-             {/* Test Links */}
-             <a href="/manager" className="text-xs text-white/50 hover:text-white transition-colors bg-white/5 px-3 py-1.5 rounded-full">Manager (Test)</a>
-             <a href="/driver" className="text-xs text-white/50 hover:text-white transition-colors bg-white/5 px-3 py-1.5 rounded-full">Driver (Test)</a>
-           </div>
+    <div className="min-h-screen bg-[#EFF6FF] w-full flex flex-col relative overflow-x-hidden" dir={t.dir}>
+
+      {/* Water ripple hero ─────────────────────────────────────────────────── */}
+      <div className="w-full relative flex flex-col items-center justify-center bg-[#0057FF] overflow-hidden pt-10 pb-24">
+        {/* Animated water ripple rings */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          {[0, 1, 2].map(i => (
+            <span
+              key={i}
+              className="absolute rounded-full border border-white/10"
+              style={{
+                width: `${260 + i * 130}px`,
+                height: `${260 + i * 130}px`,
+                animation: `ripple 3s ease-out ${i * 1}s infinite`,
+              }}
+            />
+          ))}
         </div>
-        
-        {/* Logo and Slogan */}
-        <div className="relative z-10 flex flex-col items-center text-center px-6 mt-2">
-           <div className="flex flex-col items-center gap-3">
-             <span className="text-white font-extrabold tracking-tight text-3xl md:text-5xl drop-shadow-md">WashTech</span>
-           </div>
-           <p className="text-[#E5E5EA] mt-4 text-base md:text-lg font-medium max-w-sm leading-relaxed drop-shadow-sm">{t.subtitle}</p>
+        <div className="absolute inset-0 bg-gradient-to-b from-[#003B95]/60 to-[#0057FF]/80" />
+
+        {/* Language switcher */}
+        <div className={`absolute top-4 ${isRtl ? 'left-4' : 'right-4'} flex gap-2 z-20`}>
+          {(['ar', 'ku'] as Language[]).map(l => (
+            <button
+              key={l}
+              type="button"
+              onClick={() => setLang(l)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${lang === l ? 'bg-white text-[#0057FF]' : 'bg-white/10 text-white border border-white/20 hover:bg-white/20'}`}
+            >
+              {l === 'ar' ? 'عربي' : 'کوردی'}
+            </button>
+          ))}
+        </div>
+
+        {/* Logo + tagline */}
+        <div className="relative z-10 flex flex-col items-center text-center px-6 gap-3">
+          <div className="flex items-center gap-3">
+            <WashTechLogo className="w-12 h-12" white />
+            <span className="text-white font-extrabold text-3xl md:text-4xl tracking-tight drop-shadow-lg">Wash Tech</span>
+          </div>
+          <p className="text-white/90 text-lg md:text-xl font-semibold mt-1 drop-shadow">{t.heroTagline}</p>
+          <p className="text-white/60 text-sm">{t.heroSub}</p>
         </div>
       </div>
 
-      {/* Form Container */}
-      <div className="w-full flex-1 flex flex-col z-10 relative -mt-12 lg:-mt-16 bg-[#F2F2F7] rounded-t-[32px] overflow-hidden">
-        <div className="w-full max-w-2xl mx-auto px-5 lg:px-12 pb-12 pt-8 relative">
-          
-          {status === 'success' ? (
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }} 
-              animate={{ scale: 1, opacity: 1 }} 
-              className="flex flex-col items-center justify-center text-center mt-4 lg:mt-24 bg-white p-8 lg:p-12 rounded-3xl shadow-sm"
-            >
-              <CheckCircle2 className="w-16 h-16 lg:w-20 lg:h-20 text-[#007AFF] mb-4" />
-              <h2 className="text-2xl lg:text-3xl font-bold text-gray-900 mb-2">{t.success}</h2>
-              <p className="text-gray-500 lg:text-lg">{t.successSubtitle}</p>
-              
-              <button 
-                onClick={() => setStatus('idle')}
-                className="mt-8 text-[#007AFF] font-medium text-[17px] hover:bg-blue-50 transition-colors rounded-xl px-6 active:opacity-50 py-3"
-              >
-                {t.done}
-              </button>
-            </motion.div>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-6 pb-8 lg:mt-8">
-              
-              {status === 'error' && (
-                <div className="px-4 py-3 bg-red-50 text-red-600 rounded-2xl flex items-start gap-3 border border-red-100">
-                  <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
-                  <span className="text-[15px] leading-snug">
-                    {errorMessage || t.error}
-                  </span>
-                </div>
-              )}
+      {/* Form card ─────────────────────────────────────────────────────────── */}
+      <div className="w-full flex-1 relative -mt-12 rounded-t-[32px] bg-[#EFF6FF] z-10">
+        <div className="max-w-2xl mx-auto px-4 md:px-8 pt-8 pb-24">
 
-              {/* Personal Info Group */}
-              <div>
-                <div className="flex items-center justify-between pl-4 pr-1 mb-2">
-                  <div className="text-[13px] text-gray-400 font-semibold tracking-wide uppercase">{t.name}</div>
-                  <button
-                    type="button"
-                    onClick={submitTestData}
-                    className="text-[11px] text-[#007AFF] bg-blue-50/50 px-2.5 py-1 rounded-full font-medium hover:bg-blue-100 transition-colors active:opacity-50 uppercase tracking-widest border border-blue-100"
-                  >
-                    Test Fill
-                  </button>
-                </div>
-                <div className="bg-white rounded-3xl overflow-hidden shadow-sm border border-gray-100 transition-shadow focus-within:shadow-md focus-within:border-blue-100">
-                  <div className="flex items-center px-5 min-h-[56px] border-b border-gray-100">
+          <AnimatePresence mode="wait">
+            {status === 'success' ? (
+              <motion.div
+                key="success"
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="flex flex-col items-center text-center mt-8 bg-white rounded-3xl p-10 shadow-sm border border-blue-100"
+              >
+                <CheckCircle2 className="w-20 h-20 text-[#0057FF] mb-4" />
+                <h2 className="text-2xl font-bold text-[#0A1628] mb-2">{t.successTitle}</h2>
+                <p className="text-gray-500 text-base">{t.successSub}</p>
+                <button
+                  onClick={() => { setStatus('idle'); setForm({ ...EMPTY_FORM, date: new Date().toISOString().split('T')[0] }); }}
+                  className="mt-8 bg-[#0057FF] text-white font-bold px-8 py-3 rounded-2xl shadow-lg shadow-blue-500/30 hover:bg-blue-700 transition-colors active:scale-95"
+                >
+                  {t.successBtn}
+                </button>
+              </motion.div>
+            ) : (
+              <motion.form
+                key="form"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                onSubmit={handleSubmit}
+                className="space-y-6"
+              >
+                {status === 'error' && (
+                  <div className="flex items-center gap-3 px-4 py-3 bg-red-50 text-red-600 rounded-2xl border border-red-100">
+                    <AlertCircle className="w-5 h-5 shrink-0" />
+                    <span className="text-sm">{errorMsg || t.errorMsg}</span>
+                  </div>
+                )}
+
+                {/* Name + Phone ─────────────────────────────────────────── */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 px-1">{t.nameLabel}</label>
+                  <div className="bg-white rounded-3xl overflow-hidden shadow-sm border border-gray-100 focus-within:border-[#0057FF]/30 focus-within:shadow-md transition-all">
                     <input
-                      name="name"
                       type="text"
                       required
-                      value={formData.name}
-                      onChange={handleInputChange}
+                      value={form.name}
+                      onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                       placeholder={t.namePlaceholder}
-                      className="flex-1 w-full outline-none bg-transparent placeholder-gray-300 py-4 text-[17px] text-gray-900 focus:placeholder-gray-400 transition-colors"
+                      className="w-full outline-none bg-transparent px-5 py-4 text-[17px] text-[#0A1628] placeholder-gray-300 border-b border-gray-100"
                     />
-                  </div>
-                  <div className="flex items-center px-5 min-h-[56px]">
                     <input
-                      name="phone"
                       type="tel"
                       required
                       dir="ltr"
-                      value={formData.phone}
-                      onChange={handleInputChange}
+                      value={form.phone}
+                      onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
                       placeholder={t.phonePlaceholder}
-                      className={`flex-1 w-full outline-none bg-transparent placeholder-gray-300 py-4 text-[17px] text-gray-900 focus:placeholder-gray-400 transition-colors ${isRtl ? 'text-right' : 'text-left'}`}
+                      className={`w-full outline-none bg-transparent px-5 py-4 text-[17px] text-[#0A1628] placeholder-gray-300 ${isRtl ? 'text-right' : 'text-left'}`}
                     />
                   </div>
                 </div>
-              </div>
 
-              {/* Selection Group */}
-              <div>
-                 <div className="pl-4 mb-2 text-[13px] text-gray-400 font-semibold tracking-wide uppercase">{t.selectOption}</div>
-                 <div className="bg-white rounded-3xl overflow-hidden shadow-sm border border-gray-100">
-                    <div 
-                      onClick={() => setActiveSheet('neighborhood')} 
-                      className="flex items-center justify-between px-5 min-h-[56px] hover:bg-gray-50 active:bg-gray-100 transition-colors border-b border-gray-100 cursor-pointer"
-                    >
-                      <span className="text-gray-900 font-medium py-4 text-[17px]">{t.neighborhood}</span>
-                      <div className="flex items-center gap-2 ml-4 py-4">
-                        <span className={`truncate max-w-[150px] lg:max-w-[250px] text-[17px] ${formData.neighborhood ? 'text-[#007AFF]' : 'text-gray-400'}`}>
-                          {formData.neighborhood ? formData.neighborhood : t.neighborhoodPlaceholder}
-                        </span>
-                        {isRtl ? <ChevronLeft className="w-5 h-5 text-gray-300 shrink-0" /> : <ChevronRight className="w-5 h-5 text-gray-300 shrink-0" />}
-                      </div>
-                    </div>
-                    
-                    <div 
-                      onClick={() => setActiveSheet('carType')} 
-                      className="flex items-center justify-between px-5 min-h-[56px] hover:bg-gray-50 active:bg-gray-100 transition-colors border-b border-gray-100 cursor-pointer"
-                    >
-                      <span className="text-gray-900 font-medium py-4 text-[17px]">{t.carType}</span>
-                      <div className="flex items-center gap-2 ml-4 py-4">
-                        <span className={`truncate max-w-[150px] lg:max-w-[250px] text-[17px] ${formData.carType ? 'text-[#007AFF]' : 'text-gray-400'}`}>
-                          {formData.carType ? t.carTypes[formData.carType as keyof typeof t.carTypes] : t.carTypePlaceholder}
-                        </span>
-                        {isRtl ? <ChevronLeft className="w-5 h-5 text-gray-300 shrink-0" /> : <ChevronRight className="w-5 h-5 text-gray-300 shrink-0" />}
-                      </div>
-                    </div>
-                    <div 
-                      onClick={() => setActiveSheet('date')} 
-                      className="flex items-center justify-between px-5 min-h-[56px] hover:bg-gray-50 active:bg-gray-100 transition-colors border-b border-gray-100 cursor-pointer"
-                    >
-                      <span className="text-gray-900 font-medium py-4 text-[17px]">{t.selectDate}</span>
-                      <div className="flex items-center gap-2 ml-4 py-4">
-                        <span className={`truncate max-w-[150px] lg:max-w-[250px] text-[17px] ${formData.date ? 'text-[#007AFF]' : 'text-gray-400'}`}>
-                          {formData.date === 'today' ? t.today : t.tomorrow}
-                        </span>
-                        {isRtl ? <ChevronLeft className="w-5 h-5 text-gray-300 shrink-0" /> : <ChevronRight className="w-5 h-5 text-gray-300 shrink-0" />}
-                      </div>
-                    </div>
-                 </div>
-              </div>
-
-              {/* Slots modern dropdown */}
-              <div>
-                 <div className="pl-4 mb-2 text-[13px] text-gray-400 font-semibold tracking-wide uppercase flex items-center justify-between pr-4">
-                    <span>{t.slot}</span>
-                    {availableSlots === null && <span className="text-[11px] animate-pulse text-[#007AFF]">Loading...</span>}
-                 </div>
-                 <div className="bg-white rounded-3xl overflow-hidden shadow-sm border border-gray-100 focus-within:border-blue-100 focus-within:shadow-md transition-shadow relative">
-                    <select
-                      value={formData.slot}
-                      onChange={(e) => setFormData({...formData, slot: e.target.value})}
-                      className={`w-full appearance-none outline-none bg-transparent py-4 px-5 text-[17px] ${formData.slot ? 'text-gray-900' : 'text-gray-400'} cursor-pointer h-[56px]`}
-                      dir={isRtl ? 'rtl' : 'ltr'}
-                    >
-                       <option value="" disabled hidden>{t.slotPlaceholder}</option>
-                       {Object.entries(t.slots).map(([key, label]) => {
-                          const isAvailable = availableSlots === null || availableSlots.includes(key);
-                          return (
-                             <option key={key} value={key} disabled={!isAvailable}>
-                                {label} {!isAvailable ? '(Booked)' : ''}
-                             </option>
-                          );
-                       })}
-                    </select>
-                    <div className={`absolute top-1/2 -translate-y-1/2 pointer-events-none ${isRtl ? 'left-5' : 'right-5'}`}>
-                       <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-                    </div>
-                 </div>
-              </div>
-              <div>
-                 <div className="pl-4 mb-2 text-[13px] text-gray-400 font-semibold tracking-wide uppercase">{t.exactLocation}</div>
-                 <div className="bg-white rounded-3xl overflow-hidden shadow-sm border border-gray-100 p-4">
-                    <button
-                        type="button"
-                        onClick={handleGetLocation}
-                        disabled={isGettingLocation || !!formData.gpsLocation}
-                        className={`w-full py-3.5 rounded-2xl font-semibold flex items-center justify-center gap-2 transition-all ${
-                          formData.gpsLocation 
-                            ? 'bg-green-50 text-green-600 border border-green-200 cursor-default' 
-                            : isGettingLocation 
-                              ? 'bg-gray-100 text-gray-500 cursor-wait' 
-                              : 'bg-[#007AFF]/10 text-[#007AFF] hover:bg-[#007AFF]/20 active:scale-95'
-                        }`}
-                    >
-                      {formData.gpsLocation ? (
-                        <>
-                          <CheckCircle2 className="w-5 h-5" />
-                          {t.locationAcquired}
-                        </>
-                      ) : isGettingLocation ? (
-                        <>
-                          <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                          </svg>
-                          {t.fetchingLocation}
-                        </>
-                      ) : (
-                        <>
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                          {t.getLocation}
-                        </>
-                      )}
-                    </button>
-                    {formData.gpsLocation && (
-                       <div className="mt-3 text-xs text-center text-gray-500 font-mono" dir="ltr">
-                          {formData.gpsLocation}
-                       </div>
-                    )}
-                 </div>
-              </div>
-
-
-
-              {/* Submit Section */}
-              <div className="pt-6">
+                {/* Location ─────────────────────────────────────────────── */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 px-1">{t.locationLabel}</label>
                   <button
-                    type="submit"
-                    disabled={status === 'submitting' || !isFormValid}
-                    className={`w-full py-4 rounded-2xl lg:rounded-3xl text-white font-semibold flex items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-lg
-                      ${status === 'submitting' || !isFormValid
-                        ? 'bg-[#007AFF]/60 cursor-not-allowed shadow-none' 
-                        : 'bg-[#007AFF] hover:bg-blue-600 shadow-blue-500/20 hover:shadow-blue-500/40'
-                      }
-                    `}
+                    type="button"
+                    onClick={() => setLocationSheet(true)}
+                    className="w-full bg-white rounded-3xl border border-gray-100 shadow-sm px-5 py-4 flex items-center justify-between text-[17px] hover:bg-gray-50 active:bg-gray-100 transition-colors"
                   >
-                    {status === 'submitting' ? (
-                      <>
-                        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                      </>
-                    ) : (
-                      t.submit
-                    )}
+                    <span className={form.location ? 'text-[#0A1628] font-medium' : 'text-gray-300'}>{form.location || t.locationPlaceholder}</span>
+                    {isRtl ? <ChevronLeft className="w-5 h-5 text-gray-300" /> : <ChevronRight className="w-5 h-5 text-gray-300" />}
                   </button>
+                </div>
 
-                  {/* Dev Test Data Auto-fill & Submit */}
-                  <button 
-                    type="button" 
-                    onClick={submitTestData}
-                    className="w-full mt-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-medium rounded-2xl transition-colors opacity-60 hover:opacity-100"
-                  >
-                     Auto-fill & Submit (Debug)
-                  </button>
-              </div>
-            </form>
-          )}
+                {/* Package Cards ─────────────────────────────────────────── */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 px-1">{t.packageLabel}</label>
+                  <div className="grid grid-cols-3 gap-3">
+                    {(Object.keys(PACKAGES) as PackageId[]).map(pkgId => {
+                      const pkg = PACKAGES[pkgId];
+                      const selected = form.package === pkgId;
+                      const name = lang === 'ar'
+                        ? pkg.nameAr
+                        : (pkgId === 'basic' ? t.pkgBasicName : pkgId === 'premium' ? t.pkgPremiumName : t.pkgFullName);
+                      return (
+                        <button
+                          key={pkgId}
+                          type="button"
+                          onClick={() => setForm(f => ({ ...f, package: pkgId }))}
+                          className={`relative flex flex-col items-center rounded-2xl p-3 md:p-4 border-2 transition-all active:scale-95 ${
+                            selected
+                              ? 'bg-[#0057FF] border-[#0057FF] shadow-lg shadow-blue-500/30'
+                              : 'bg-white border-gray-100 hover:border-[#0057FF]/40 shadow-sm'
+                          }`}
+                        >
+                          {selected && (
+                            <span className="absolute top-2 right-2 w-5 h-5 bg-white rounded-full flex items-center justify-center">
+                              <Check className="w-3 h-3 text-[#0057FF]" />
+                            </span>
+                          )}
+                          <span className="text-2xl mb-1">{pkgId === 'basic' ? '🚿' : pkgId === 'premium' ? '✨' : '💎'}</span>
+                          <span className={`text-center font-bold text-xs leading-tight mb-1 ${selected ? 'text-white' : 'text-[#0A1628]'}`}>{name}</span>
+                          <span className={`text-[10px] font-semibold ${selected ? 'text-white/80' : 'text-[#0057FF]'}`}>{pkg.price.toLocaleString()} IQD</span>
+                          <span className={`text-[10px] mt-0.5 ${selected ? 'text-white/60' : 'text-gray-400'}`}>{pkg.nameEn}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Date + Time ─────────────────────────────────────────────── */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 px-1">{t.dateLabel}</label>
+                  <div className="bg-white rounded-3xl overflow-hidden shadow-sm border border-gray-100 focus-within:border-[#0057FF]/30 focus-within:shadow-md transition-all">
+                    <input
+                      type="date"
+                      required
+                      value={form.date}
+                      min={new Date().toISOString().split('T')[0]}
+                      onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
+                      className="w-full outline-none bg-transparent px-5 py-4 text-[17px] text-[#0A1628] border-b border-gray-100"
+                      dir="ltr"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setTimeSheet(true)}
+                      className="w-full px-5 py-4 flex items-center justify-between text-[17px] hover:bg-gray-50 transition-colors"
+                    >
+                      <span className={timeLabel ? 'text-[#0A1628] font-medium' : 'text-gray-300'}>{timeLabel || t.timePlaceholder}</span>
+                      {isRtl ? <ChevronLeft className="w-5 h-5 text-gray-300" /> : <ChevronRight className="w-5 h-5 text-gray-300" />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Notes ───────────────────────────────────────────────────── */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 px-1">{t.notesLabel}</label>
+                  <textarea
+                    value={form.notes}
+                    onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+                    placeholder={t.notesPlaceholder}
+                    rows={3}
+                    className="w-full bg-white rounded-3xl border border-gray-100 shadow-sm px-5 py-4 text-[17px] text-[#0A1628] placeholder-gray-300 outline-none resize-none focus:border-[#0057FF]/30 focus:shadow-md transition-all"
+                  />
+                </div>
+
+                {/* Submit ─────────────────────────────────────────────────── */}
+                <button
+                  type="submit"
+                  disabled={!isValid || status === 'submitting'}
+                  className={`w-full py-4 rounded-2xl text-white font-bold text-lg flex items-center justify-center gap-3 transition-all active:scale-[0.98] ${
+                    isValid && status !== 'submitting'
+                      ? 'bg-[#0057FF] shadow-xl shadow-blue-500/30 hover:bg-blue-700'
+                      : 'bg-[#0057FF]/40 cursor-not-allowed shadow-none'
+                  }`}
+                >
+                  {status === 'submitting' ? (
+                    <svg className="animate-spin w-5 h-5" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  ) : (
+                    <>
+                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+                        <path d="M13 0C5.373 0 0 5.373 0 12c0 2.127.558 4.122 1.532 5.857L0 24l6.302-1.502A11.966 11.966 0 0013 24c6.627 0 12-5.373 12-12S19.627 0 13 0zm0 21.818a9.814 9.814 0 01-5.012-1.374l-.36-.214-3.736.98.998-3.647-.235-.373A9.816 9.816 0 013.182 12C3.182 6.614 7.614 2.182 13 2.182S22.818 6.614 22.818 12 18.386 21.818 13 21.818z"/>
+                      </svg>
+                      {t.submitBtn}
+                    </>
+                  )}
+                </button>
+              </motion.form>
+            )}
+          </AnimatePresence>
         </div>
       </div>
 
-      {/* Global Bottom Sheet Handler */}
-      {renderSheet()}
+      {/* Location bottom sheet ─────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {locationSheet && (
+          <>
+            <motion.div
+              key="loc-bg"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/40 z-[100]"
+              onClick={() => setLocationSheet(false)}
+            />
+            <motion.div
+              key="loc-sheet"
+              initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+              transition={{ type: 'spring', damping: 26, stiffness: 260 }}
+              className="fixed bottom-0 left-0 right-0 max-w-2xl mx-auto bg-[#F2F2F7] rounded-t-3xl z-[101] max-h-[80vh] flex flex-col"
+              dir={t.dir}
+            >
+              <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200/70 shrink-0">
+                <button type="button" onClick={() => setLocationSheet(false)} className="text-[#0057FF] text-[17px]">{t.cancel}</button>
+                <span className="font-semibold text-[17px] text-gray-900">{t.locationLabel}</span>
+                <button type="button" onClick={() => setLocationSheet(false)} className="text-[#0057FF] text-[17px] font-semibold">{t.done}</button>
+              </div>
+              <div className="overflow-y-auto p-4">
+                <div className="bg-white rounded-2xl overflow-hidden shadow-sm">
+                  {t.neighborhoods.map((n, i, arr) => (
+                    <div
+                      key={n}
+                      onClick={() => { setForm(f => ({ ...f, location: n })); setLocationSheet(false); }}
+                      className={`flex items-center justify-between px-5 py-4 cursor-pointer active:bg-gray-100 hover:bg-gray-50 transition-colors ${i < arr.length - 1 ? 'border-b border-gray-100' : ''}`}
+                    >
+                      <span className={`text-[17px] ${form.location === n ? 'text-[#0057FF] font-medium' : 'text-[#0A1628]'}`}>{n}</span>
+                      {form.location === n && <Check className="w-5 h-5 text-[#0057FF]" />}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
+      {/* Time bottom sheet ─────────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {timeSheet && (
+          <>
+            <motion.div
+              key="time-bg"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/40 z-[100]"
+              onClick={() => setTimeSheet(false)}
+            />
+            <motion.div
+              key="time-sheet"
+              initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+              transition={{ type: 'spring', damping: 26, stiffness: 260 }}
+              className="fixed bottom-0 left-0 right-0 max-w-2xl mx-auto bg-[#F2F2F7] rounded-t-3xl z-[101] max-h-[80vh] flex flex-col"
+              dir={t.dir}
+            >
+              <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200/70 shrink-0">
+                <button type="button" onClick={() => setTimeSheet(false)} className="text-[#0057FF] text-[17px]">{t.cancel}</button>
+                <span className="font-semibold text-[17px] text-gray-900">{t.timeLabel}</span>
+                <button type="button" onClick={() => setTimeSheet(false)} className="text-[#0057FF] text-[17px] font-semibold">{t.done}</button>
+              </div>
+              <div className="overflow-y-auto p-4">
+                <div className="bg-white rounded-2xl overflow-hidden shadow-sm">
+                  {TIME_SLOTS.map((slot, i) => {
+                    const label = lang === 'ar' ? slot.labelAr : slot.labelKu;
+                    return (
+                      <div
+                        key={slot.value}
+                        onClick={() => { setForm(f => ({ ...f, time: slot.value })); setTimeSheet(false); }}
+                        className={`flex items-center justify-between px-5 py-4 cursor-pointer active:bg-gray-100 hover:bg-gray-50 transition-colors ${i < TIME_SLOTS.length - 1 ? 'border-b border-gray-100' : ''}`}
+                      >
+                        <span className={`text-[17px] ${form.time === slot.value ? 'text-[#0057FF] font-medium' : 'text-[#0A1628]'}`}>{label}</span>
+                        {form.time === slot.value && <Check className="w-5 h-5 text-[#0057FF]" />}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
