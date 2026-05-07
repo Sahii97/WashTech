@@ -103,16 +103,17 @@ async function startServer() {
       const finalUrl = `${N8N_BOOKING_URL}?${params.toString()}`;
       console.log('Proxying new booking to n8n Collecter:', finalUrl);
 
+      // Use GET — n8n Collecter webhook is configured for GET, and all data is already in query params
       const response = await fetch(finalUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(req.body) // Also send body just in case
+        method: 'GET',
+        headers: { 'Accept': 'application/json' }
       });
       
       const data = await response.text();
+      console.log(`[n8n] Collecter response: HTTP ${response.status} — ${data}`);
       res.status(response.status).send(data);
     } catch (error) {
-      console.error('n8n Proxy Error:', error);
+      console.error('[n8n] Proxy Error reaching Collecter:', error);
       res.status(500).json({ success: false, error: 'Failed to reach n8n' });
     }
   });
