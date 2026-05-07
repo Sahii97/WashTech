@@ -9,6 +9,10 @@ async function startServer() {
   // Middleware to parse JSON body
   app.use(express.json());
 
+  // n8n webhook URL — set N8N_WEBHOOK_URL in AI Studio Secrets (or .env) to override
+  const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'https://fahad97.app.n8n.cloud/webhook/manager-approval';
+  console.log(`[n8n] Using webhook URL: ${N8N_WEBHOOK_URL}`);
+
   // In-memory store for available slots synced from n8n
   let availableSlots: any[] = [
     '09:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '01:00 PM',
@@ -81,7 +85,7 @@ async function startServer() {
   // 4. Proxy for n8n Webhooks to avoid CORS issues
   app.post('/api/proxy-n8n', async (req, res) => {
     try {
-      const N8N_URL = 'https://fahad97.app.n8n.cloud/webhook/manager-approval';
+      const N8N_URL = N8N_WEBHOOK_URL;
       
       // Convert body to query parameters because n8n nodes are looking at $json.query
       const params = new URLSearchParams();
@@ -146,8 +150,7 @@ async function startServer() {
   // Proxy Route for New Booking (To n8n)
   app.post('/api/webhook', async (req, res) => {
     try {
-      // Hardcoded to ensure we don't accidentally use an outdated environment variable
-      const webhookUrl = 'https://fahad97.app.n8n.cloud/webhook/manager-approval';
+      const webhookUrl = N8N_WEBHOOK_URL;
       
       const orderId = `ORD-${Math.floor(Math.random() * 10000)}`;
 
@@ -195,9 +198,7 @@ async function startServer() {
   // Proxy Route for Manager Approving/Rejecting Booking (To n8n)
   app.post('/api/manager/action', async (req, res) => {
     try {
-      // You should set up a new webhook in n8n to handle Manager Approvals/Rejections. 
-      // i.e. https://fahad97.app.n8n.cloud/webhook-test/manager-approval 
-      const actionWebhookUrl = 'https://fahad97.app.n8n.cloud/webhook/manager-approval';
+      const actionWebhookUrl = N8N_WEBHOOK_URL;
       
       const { bookingId, driverId, action } = req.body;
       
@@ -276,8 +277,7 @@ async function startServer() {
         `);
       }
 
-      // Notify n8n about manager approval just like the manager dashboard does
-      const actionWebhookUrl = 'https://fahad97.app.n8n.cloud/webhook/manager-approval';
+      const actionWebhookUrl = N8N_WEBHOOK_URL;
       const queryParams = new URLSearchParams({ 
         bookingId: matchedBookingId, 
         driverId: availableDrivers[0]?.id || 'none',

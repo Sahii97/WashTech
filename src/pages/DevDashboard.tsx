@@ -54,8 +54,10 @@ export default function DevDashboard() {
       
       setBookingsCount(0);
       alert('Reset complete.');
+      window.location.reload();
     } catch (err) {
-      alert('Reset failed.');
+      console.error('Reset error:', err);
+      alert('Reset failed: ' + String(err));
     } finally {
       setIsResetting(false);
     }
