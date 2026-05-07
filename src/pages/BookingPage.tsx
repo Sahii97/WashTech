@@ -121,6 +121,24 @@ export default function BookingPage() {
         language: lang,
         submittedAt: new Date().toISOString()
       });
+
+      // --- n8n Webhook Integration ---
+      try {
+        const PROXY_URL = '/api/proxy-n8n'; 
+        fetch(PROXY_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: docRef.id,
+            ...formData,
+            status: 'pending',
+            action: 'new_booking'
+          })
+        }).catch(err => console.error('n8n proxy notification failed:', err));
+      } catch (e) {
+        console.error('n8n proxy webhook error:', e);
+      }
+      // -------------------------------
       
       setBookingId(docRef.id);
       setBookingStatus('pending');
@@ -160,6 +178,24 @@ export default function BookingPage() {
         submittedAt: new Date().toISOString()
       });
       
+      // --- n8n Webhook Integration (Test) ---
+      try {
+        const PROXY_URL = '/api/proxy-n8n'; 
+        fetch(PROXY_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: docRef.id,
+            ...testData,
+            status: 'pending',
+            action: 'test_booking'
+          })
+        }).catch(err => console.error('n8n proxy notification failed:', err));
+      } catch (e) {
+        console.error('n8n proxy webhook error:', e);
+      }
+      // -------------------------------
+
       setBookingId(docRef.id);
       setBookingStatus('pending');
       setStatus('success');

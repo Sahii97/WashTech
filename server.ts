@@ -26,9 +26,14 @@ async function startServer() {
   // 1. Endpoint for n8n to update slots
   app.post('/api/update-slots', (req, res) => {
     try {
-      availableSlots = Array.isArray(req.body) ? req.body : (req.body.slots || req.body);
-      console.log('Received updated slots from n8n:', availableSlots);
-      res.status(200).json({ success: true, message: 'Slots updated successfully' });
+      const slots = req.body.availableSlots || req.body.slots || (Array.isArray(req.body) ? req.body : null);
+      if (slots) {
+        availableSlots = slots;
+        console.log('Received updated slots from n8n:', availableSlots);
+        res.status(200).json({ success: true, message: 'Slots updated successfully' });
+      } else {
+        res.status(400).json({ success: false, error: 'Invalid payload format' });
+      }
     } catch (error) {
       console.error('Error updating slots:', error);
       res.status(500).json({ success: false, error: 'Internal server error' });
@@ -38,12 +43,66 @@ async function startServer() {
   // 2. Endpoint for n8n to update drivers
   app.post('/api/update-drivers', (req, res) => {
     try {
-      availableDrivers = Array.isArray(req.body) ? req.body : (req.body.drivers || req.body);
-      console.log('Received updated drivers from n8n:', availableDrivers);
-      res.status(200).json({ success: true, message: 'Drivers updated successfully' });
+      const drivers = req.body.availableDrivers || req.body.drivers || (Array.isArray(req.body) ? req.body : null);
+      if (drivers) {
+        availableDrivers = drivers;
+        console.log('Received updated drivers from n8n:', availableDrivers);
+        res.status(200).json({ success: true, message: 'Drivers updated successfully' });
+      } else {
+        res.status(400).json({ success: false, error: 'Invalid payload format' });
+      }
     } catch (error) {
       console.error('Error updating drivers:', error);
       res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+  });
+
+  // 3. Reset All Data
+  app.post('/api/reset-data', (req, res) => {
+    try {
+      activeBookings = [];
+      availableDrivers = [
+        { id: 'd1', name: 'Ali (Default)', code: '1234' }
+      ];
+      availableSlots = [
+        '09:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '01:00 PM',
+        '02:00 PM', '03:00 PM', '04:00 PM', '05:00 PM', '06:00 PM',
+        '07:00 PM', '08:00 PM', '09:00 PM', '10:00 PM', '11:00 PM',
+        '12:00 AM'
+      ];
+      console.log('Server memory data reset.');
+      res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('Error resetting data:', error);
+      res.status(500).json({ success: false });
+    }
+  });
+
+  // 4. Proxy for n8n Webhooks to avoid CORS issues
+  app.post('/api/proxy-n8n', async (req, res) => {
+    try {
+      const N8N_URL = 'https://fahad97.app.n8n.cloud/webhook/manager-approval';
+      
+      // Convert body to query parameters because n8n nodes are looking at $json.query
+      const params = new URLSearchParams();
+      for (const [key, value] of Object.entries(req.body)) {
+        params.append(key, String(value));
+      }
+
+      const finalUrl = `${N8N_URL}?${params.toString()}`;
+      console.log('Proxying to n8n:', finalUrl);
+
+      const response = await fetch(finalUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(req.body) // Also send body just in case
+      });
+      
+      const data = await response.text();
+      res.status(response.status).send(data);
+    } catch (error) {
+      console.error('n8n Proxy Error:', error);
+      res.status(500).json({ success: false, error: 'Failed to reach n8n' });
     }
   });
 
@@ -88,7 +147,7 @@ async function startServer() {
   app.post('/api/webhook', async (req, res) => {
     try {
       // Hardcoded to ensure we don't accidentally use an outdated environment variable
-      const webhookUrl = 'https://fahad97.app.n8n.cloud/webhook-test/7fcc4e77-6172-4476-a706-2864a4a0ae92';
+      const webhookUrl = 'https://fahad97.app.n8n.cloud/webhook/manager-approval';
       
       const orderId = `ORD-${Math.floor(Math.random() * 10000)}`;
 
@@ -138,7 +197,7 @@ async function startServer() {
     try {
       // You should set up a new webhook in n8n to handle Manager Approvals/Rejections. 
       // i.e. https://fahad97.app.n8n.cloud/webhook-test/manager-approval 
-      const actionWebhookUrl = 'https://fahad97.app.n8n.cloud/webhook-test/manager-approval';
+      const actionWebhookUrl = 'https://fahad97.app.n8n.cloud/webhook/manager-approval';
       
       const { bookingId, driverId, action } = req.body;
       
@@ -218,7 +277,7 @@ async function startServer() {
       }
 
       // Notify n8n about manager approval just like the manager dashboard does
-      const actionWebhookUrl = 'https://fahad97.app.n8n.cloud/webhook-test/manager-approval';
+      const actionWebhookUrl = 'https://fahad97.app.n8n.cloud/webhook/manager-approval';
       const queryParams = new URLSearchParams({ 
         bookingId: matchedBookingId, 
         driverId: availableDrivers[0]?.id || 'none',
