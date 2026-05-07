@@ -59,6 +59,17 @@ async function startServer() {
     }
   });
 
+  // --- Manager Endpoints ---
+  app.post('/api/manager/login', (req, res) => {
+    const { password } = req.body;
+    // In production this should be a strong env variable
+    if (password === 'admin123') {
+      res.json({ success: true, token: 'manager-token-abc' });
+    } else {
+      res.status(401).json({ success: false, error: 'Invalid password' });
+    }
+  });
+
   // --- Endpoints for the Frontend ---
 
   app.get('/api/slots', (req, res) => {
@@ -282,8 +293,19 @@ async function startServer() {
 
   app.get('/api/driver/dashboard', (req, res) => {
     const driverId = req.query.driverId;
-    const driverOrders = activeBookings.filter(b => b.driverId === driverId && b.status === 'approved');
+    const driverOrders = activeBookings.filter(b => b.driverId === driverId && (b.status === 'approved' || b.status === 'on_process'));
     res.status(200).json({ success: true, bookings: driverOrders });
+  });
+
+  app.post('/api/driver/accept-task', (req, res) => {
+    const { bookingId } = req.body;
+    const bookingIndex = activeBookings.findIndex(b => b.id === bookingId);
+    if (bookingIndex !== -1) {
+       activeBookings[bookingIndex].status = 'on_process';
+       res.status(200).json({ success: true });
+    } else {
+       res.status(404).json({ success: false, error: 'Not found' });
+    }
   });
 
   app.post('/api/driver/complete-task', (req, res) => {

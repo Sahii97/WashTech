@@ -1,17 +1,44 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Car, CheckCircle2, Clock, MapPin, User, Check, X, ChevronDown } from 'lucide-react';
+import { Car, CheckCircle2, Clock, MapPin, User, Check, X, ChevronDown, Tag } from 'lucide-react';
 import { i18n, Language } from '../translations';
 
 
 export default function ManagerDashboard() {
   const [lang, setLang] = useState<Language>('ar');
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
   const t = i18n[lang];
+  const isRtl = t.dir === 'rtl';
   
   useEffect(() => {
     document.documentElement.dir = t.dir;
     document.documentElement.lang = lang;
   }, [t.dir, lang]);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoggingIn(true);
+    setLoginError('');
+    try {
+      const res = await fetch('/api/manager/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password })
+      });
+      if (res.ok) {
+        setIsAuthenticated(true);
+      } else {
+        setLoginError('Invalid password');
+      }
+    } catch (err) {
+      setLoginError('Network Error');
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
 
   const [activeTab, setActiveTab] = useState<'orders' | 'expenses' | 'drivers'>('orders');
   const [orders, setOrders] = useState<any[]>([]);
@@ -20,30 +47,32 @@ export default function ManagerDashboard() {
   const [selectedDrivers, setSelectedDrivers] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    // Fetch bookings and drivers on mount and poll
-    const fetchData = () => {
-      fetch('/api/bookings')
-        .then(res => res.json())
-        .then(data => {
-            if (data && data.bookings) {
-                setOrders(data.bookings);
-            }
-        })
-        .catch(console.error);
-        
-      fetch('/api/drivers')
-        .then(res => res.json())
-        .then(data => {
-            if (data && data.drivers) {
-                setDriversList(data.drivers);
-            }
-        })
-        .catch(console.error);
+    let unsubscribeBookings: () => void = () => {};
+    let unsubscribeDrivers: () => void = () => {};
+
+    import('firebase/firestore').then(({ collection, onSnapshot }) => {
+      import('../lib/firebase').then(({ db }) => {
+        unsubscribeBookings = onSnapshot(collection(db, 'bookings'), (snapshot) => {
+          const fetchedOrders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          // Optional: sort by createdAt descending if needed
+          setOrders(fetchedOrders);
+        }, (error) => {
+          console.error("Firebase error", error);
+        });
+
+        unsubscribeDrivers = onSnapshot(collection(db, 'drivers'), (snapshot) => {
+          const fetchedDrivers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setDriversList(fetchedDrivers);
+        }, (error) => {
+          console.error("Firebase error", error);
+        });
+      });
+    });
+
+    return () => {
+      unsubscribeBookings();
+      unsubscribeDrivers();
     };
-    
-    fetchData();
-    const intervalId = setInterval(fetchData, 10000);
-    return () => clearInterval(intervalId);
   }, []);
 
   const handleDriverChange = (orderId: string, driverId: string) => {
@@ -59,23 +88,21 @@ export default function ManagerDashboard() {
     }
        
     try {
-        const response = await fetch('/api/manager/action', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ bookingId: id, driverId: selectedDrivers[id], action })
-        });
-        
-        if (response.ok) {
-            if (action === 'approve') {
-                setOrders(prev => prev.map(o => o.id === id ? { ...o, status: 'approved' } : o));
-            } else if (action === 'reject') {
-                setOrders(prev => prev.filter(o => o.id !== id));
-            }
-        } else {
-            alert(`Failed to ${action} order`);
-        }
+      const { doc, updateDoc, deleteDoc } = await import('firebase/firestore');
+      const { db } = await import('../lib/firebase');
+      
+      if (action === 'approve') {
+         await updateDoc(doc(db, 'bookings', id), {
+            status: 'approved',
+            driverId: selectedDrivers[id],
+            approvedAt: new Date().toISOString()
+         });
+      } else if (action === 'reject') {
+         await deleteDoc(doc(db, 'bookings', id));
+      }
     } catch (error) {
         console.error(`Error processing ${action}:`, error);
+        alert(`Failed to ${action} order`);
     }
   };
 
@@ -87,28 +114,71 @@ export default function ManagerDashboard() {
     if (!newDriverName || !newDriverCode) return;
     
     try {
-      const response = await fetch('/api/manager/create-driver', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newDriverName, code: newDriverCode })
+      const { collection, addDoc } = await import('firebase/firestore');
+      const { db } = await import('../lib/firebase');
+      
+      await addDoc(collection(db, 'drivers'), {
+         name: newDriverName,
+         code: newDriverCode
       });
-      if (response.ok) {
-        const data = await response.json();
-        setDriversList(prev => [...prev, data.driver]);
-        setNewDriverName('');
-        setNewDriverCode('');
-        alert('Driver created successfully!'); // Can enhance UI later
-      } else {
-        alert('Failed to create driver');
-      }
+      setNewDriverName('');
+      setNewDriverCode('');
     } catch (error) {
       console.error(error);
+      alert('Failed to create driver');
     }
   };
 
   const pendingOrders = orders.filter(o => o.status === 'pending');
-  const inProgressOrders = orders.filter(o => o.status === 'approved');
+  const approvedOrders = orders.filter(o => o.status === 'approved');
+  const onProcessOrders = orders.filter(o => o.status === 'on_process');
   const completedOrders = orders.filter(o => o.status === 'completed');
+
+  const searchParams = new URLSearchParams(window.location.search);
+  const isSuperAdmin = searchParams.get('superadmin') === 'true';
+
+  if (false) {
+    return (
+      <div className="min-h-screen bg-[#F2F2F7] flex flex-col items-center justify-center p-6 w-full relative">
+        <div className="absolute top-0 w-full bg-[#0050B3] h-[30vh] rounded-b-[40px]"></div>
+        
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white rounded-[32px] p-8 w-full max-w-sm shadow-[0_8px_30px_rgb(0,0,0,0.06)] relative z-10">
+          <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mb-6 mx-auto">
+            <User className="w-8 h-8 text-[#007AFF]" />
+          </div>
+          
+          <h1 className="text-2xl font-bold text-center text-gray-900 mb-2">{lang === 'ar' ? 'تسجيل دخول المدير' : 'چوونەژوورەوەی بەڕێوەبەر'}</h1>
+          <p className="text-gray-500 text-center text-[15px] mb-8">{lang === 'ar' ? 'الرجاء إدخال كلمة المرور للمتابعة' : 'تکایە تێپەڕەوشە بنووسە بۆ بەردەوامبوون'}</p>
+
+          {loginError && (
+             <div className="bg-red-50 text-red-500 p-3 rounded-xl text-center text-[14px] font-bold mb-4">
+               {loginError}
+             </div>
+          )}
+
+          <form onSubmit={handleLogin} className="w-full">
+             <input 
+                type="password"
+                placeholder="****"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                dir="ltr"
+                className="w-full text-center tracking-[0.5em] text-xl font-mono py-4 bg-gray-50 border border-gray-200 rounded-2xl mb-4 focus:outline-none focus:ring-2 focus:ring-[#007AFF]/20 focus:border-[#007AFF] transition-all"
+             />
+             <button 
+               type="submit"
+               disabled={isLoggingIn || !password}
+               className={`w-full py-4 text-white font-bold rounded-2xl shadow-xl transition-all flex justify-center items-center gap-2 ${
+                 isLoggingIn || !password ? 'bg-blue-400 cursor-not-allowed shadow-none' : 'bg-[#007AFF] hover:bg-blue-600 shadow-blue-500/30'
+               }`}
+             >
+               {isLoggingIn ? '...' : (lang === 'ar' ? 'دخول' : 'چوونەژوورەوە')}
+             </button>
+          </form>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F2F2F7] w-full flex flex-col relative overflow-auto">
@@ -168,7 +238,7 @@ export default function ManagerDashboard() {
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col md:flex-row gap-6 w-full pb-8 overflow-x-auto min-h-[60vh] snap-x">
               
               {/* Column 1: New Orders */}
-              <div className="w-full md:min-w-[320px] md:w-1/3 flex flex-col gap-3 snap-center shrink-0">
+              <div className="w-full md:min-w-[320px] md:w-1/4 flex flex-col gap-3 snap-center shrink-0">
                 <div className="flex items-center justify-between px-2 py-1">
                   <h2 className="text-[13px] font-bold text-gray-500 uppercase tracking-wider">{t.newTitle}</h2>
                   <span className="bg-gray-200 text-gray-700 text-xs font-bold px-2 py-0.5 rounded-full">{pendingOrders.length}</span>
@@ -207,6 +277,12 @@ export default function ManagerDashboard() {
                           <Car className="w-4 h-4 text-[#007AFF] shrink-0" />
                           <span className="text-[13px] font-medium">{order.carType}</span>
                         </div>
+                        {order.package && (
+                          <div className="flex items-center gap-2.5 text-gray-600">
+                            <Tag className="w-4 h-4 text-[#007AFF] shrink-0" />
+                            <span className="text-[13px] font-medium">{order.package}</span>
+                          </div>
+                        )}
                         <div className="flex items-center gap-2.5 text-gray-600" dir="ltr">
                           <Clock className="w-4 h-4 text-[#007AFF] shrink-0" />
                           <span className="text-[13px] font-medium">{order.slot} {order.date && `(${order.date})`}</span>
@@ -217,21 +293,25 @@ export default function ManagerDashboard() {
                       </div>
 
                       {/* Driver Assignment Dropdown */}
-                      <div className="mb-4 relative">
-                         <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">{t.assignDriver}</div>
-                         <div className="relative">
+                      <div className="mb-5 relative mt-2 border-t border-gray-50 pt-3">
+                         <div className="relative group">
+                           <div className={`absolute inset-y-0 flex items-center pointer-events-none ${isRtl ? 'right-3' : 'left-3'}`}>
+                             <div className="w-7 h-7 bg-white rounded-full shadow-sm flex items-center justify-center">
+                               <User className="w-3.5 h-3.5 text-[#007AFF]" />
+                             </div>
+                           </div>
                            <select 
-                             className="w-full appearance-none bg-gray-50 border border-gray-100 text-gray-900 text-[13px] rounded-xl py-2 px-3 pr-8 focus:outline-none focus:ring-2 focus:ring-[#007AFF]/20 focus:border-[#007AFF] transition-all font-medium"
+                             className={`w-full appearance-none bg-blue-50/40 hover:bg-blue-50 border border-blue-100/60 text-[#0050B3] text-[14px] rounded-2xl py-3.5 focus:outline-none focus:ring-2 focus:ring-[#007AFF]/30 transition-all font-bold cursor-pointer ${isRtl ? 'pr-12 pl-10' : 'pl-12 pr-10'}`}
                              value={selectedDrivers[order.id] || ''}
                              onChange={(e) => handleDriverChange(order.id, e.target.value)}
                            >
                              <option value="" disabled>{t.chooseDriver}</option>
                              {driversList.map(d => (
-                               <option key={d.id} value={d.id}>{d.name}</option>
+                               <option key={d.id} value={d.id}>{d.name} {d.code ? `(${d.code})` : ''}</option>
                              ))}
                            </select>
-                           <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                             <ChevronDown className="w-4 h-4 text-gray-400" />
+                           <div className={`absolute inset-y-0 flex items-center pointer-events-none ${isRtl ? 'left-4' : 'right-4'}`}>
+                             <ChevronDown className="w-5 h-5 text-blue-400" />
                            </div>
                          </div>
                       </div>
@@ -260,18 +340,18 @@ export default function ManagerDashboard() {
               </div>
 
               {/* Column 2: Wait Approval from Driver */}
-              <div className="w-full md:min-w-[320px] md:w-1/3 flex flex-col gap-3 snap-center shrink-0">
+              <div className="w-full md:min-w-[320px] md:w-1/4 flex flex-col gap-3 snap-center shrink-0">
                 <div className="flex items-center justify-between px-2 py-1">
                   <h2 className="text-[13px] font-bold text-gray-500 uppercase tracking-wider">{lang === 'ar' ? 'انتظار موافقة السائق' : 'چاوەڕێی شۆفێر'}</h2>
-                  <span className="bg-gray-200 text-gray-700 text-xs font-bold px-2 py-0.5 rounded-full">{inProgressOrders.length}</span>
+                  <span className="bg-gray-200 text-gray-700 text-xs font-bold px-2 py-0.5 rounded-full">{approvedOrders.length}</span>
                 </div>
                 
-                {inProgressOrders.length === 0 && (
+                {approvedOrders.length === 0 && (
                    <div className="text-center py-8 text-gray-400 text-sm">{lang === 'ar' ? 'فارغ' : 'بەتاڵ'}</div>
                 )}
                 
                 <AnimatePresence>
-                  {inProgressOrders.map((order) => (
+                  {approvedOrders.map((order) => (
                     <motion.div key={order.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white rounded-[20px] p-4 shadow-[0_2px_10px_rgba(0,0,0,0.02)] border border-orange-100/50 flex flex-col relative overflow-hidden">
                       <div className="absolute top-0 left-0 w-1 h-full bg-orange-400"></div>
                       <div className="flex items-center justify-between mb-3 border-b border-gray-50 pb-3">
@@ -306,8 +386,66 @@ export default function ManagerDashboard() {
                 </AnimatePresence>
               </div>
 
-              {/* Column 3: Completed */}
-              <div className="w-full md:min-w-[320px] md:w-1/3 flex flex-col gap-3 snap-center shrink-0">
+              {/* Column 3: On Process by Driver */}
+              <div className="w-full md:min-w-[320px] md:w-1/4 flex flex-col gap-3 snap-center shrink-0">
+                <div className="flex items-center justify-between px-2 py-1">
+                  <h2 className="text-[13px] font-bold text-gray-500 uppercase tracking-wider">{lang === 'ar' ? 'قيد التنفيذ (مع السائق)' : 'لە جێبەجێکردندایە (لای شۆفێر)'}</h2>
+                  <span className="bg-gray-200 text-gray-700 text-xs font-bold px-2 py-0.5 rounded-full">{onProcessOrders.length}</span>
+                </div>
+                
+                {onProcessOrders.length === 0 && (
+                   <div className="text-center py-8 text-gray-400 text-sm">{lang === 'ar' ? 'فارغ' : 'بەتاڵ'}</div>
+                )}
+                
+                <AnimatePresence>
+                  {onProcessOrders.map((order) => (
+                    <motion.div key={order.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white rounded-[20px] p-4 shadow-[0_2px_10px_rgba(0,0,0,0.02)] border border-[#007AFF]/20 flex flex-col relative overflow-hidden">
+                      <div className="absolute top-0 left-0 w-1 h-full bg-[#007AFF]"></div>
+                      <div className="flex items-center justify-between mb-3 border-b border-gray-50 pb-3">
+                        <div className="font-bold text-gray-900 text-lg">{order.name}</div>
+                        <span className="bg-blue-50 text-[#007AFF] text-[10px] font-bold px-2 py-1 rounded-full tracking-wider" dir="ltr">
+                           {order.id}
+                        </span>
+                      </div>
+                      <div className="space-y-3 mb-4">
+                        <div className="flex items-start gap-2.5 text-gray-600">
+                          <MapPin className="w-4 h-4 mt-0.5 text-[#007AFF] shrink-0" />
+                          <span className="text-[13px] font-medium leading-snug">
+                              {order.neighborhood}
+                              {order.gpsLocation && (
+                                 <a href={`https://maps.google.com/?q=${encodeURIComponent(order.gpsLocation)}`} target="_blank" rel="noopener noreferrer" className="ml-2 bg-blue-50 text-[#007AFF] px-2 py-0.5 rounded-[6px] text-[10px] select-auto">GPS</a>
+                              )}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2.5 text-gray-600">
+                          <Car className="w-4 h-4 text-[#007AFF] shrink-0" />
+                          <span className="text-[13px] font-medium">{order.carType}</span>
+                        </div>
+                        {order.package && (
+                          <div className="flex items-center gap-2.5 text-gray-600">
+                            <Tag className="w-4 h-4 text-[#007AFF] shrink-0" />
+                            <span className="text-[13px] font-medium">{order.package}</span>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2.5 text-gray-600" dir="ltr">
+                          <Clock className="w-4 h-4 text-[#007AFF] shrink-0" />
+                          <span className="text-[13px] font-medium">{order.slot} {order.date && `(${order.date})`}</span>
+                        </div>
+                        <div className="flex items-center gap-2.5 text-gray-900 font-bold pt-2 border-t border-gray-50" dir="ltr">
+                          <span className="text-right w-full text-[13px]">{order.phone}</span>
+                        </div>
+                        <div className="flex items-center gap-2.5 text-gray-600 mt-2">
+                           <User className="w-4 h-4 text-gray-400" />
+                           <span className="text-xs font-bold text-gray-700">{driversList.find(d => d.id === order.driverId)?.name || order.driverId}</span>
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              </div>
+
+              {/* Column 4: Completed */}
+              <div className="w-full md:min-w-[320px] md:w-1/4 flex flex-col gap-3 snap-center shrink-0">
                 <div className="flex items-center justify-between px-2 py-1">
                   <h2 className="text-[13px] font-bold text-gray-500 uppercase tracking-wider">{lang === 'ar' ? 'مكتمل' : 'تەواوکراو'}</h2>
                   <span className="bg-gray-200 text-gray-700 text-xs font-bold px-2 py-0.5 rounded-full">{completedOrders.length}</span>

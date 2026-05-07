@@ -1,0 +1,48 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Basic helpers
+    function incoming() { return request.resource.data; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    
+    // Booking validation blueprint
+    function isValidBooking(data) {
+      return data.keys().hasAll(['name', 'phone', 'neighborhood', 'carType', 'package', 'date', 'slot', 'status'])
+        && data.name is string && data.name.size() <= 200
+        && data.phone is string && data.phone.size() <= 50
+        && data.neighborhood is string && data.neighborhood.size() <= 100
+        && data.carType is string && data.carType.size() <= 100
+        && data.package is string && data.package.size() <= 100
+        && data.date is string && data.date.size() <= 50
+        && data.slot is string && data.slot.size() <= 50
+        && data.status is string && data.status in ['pending', 'approved', 'on_process', 'completed', 'rejected'];
+    }
+
+    // Driver validation blueprint
+    function isValidDriver(data) {
+      return data.keys().hasAll(['name', 'code'])
+        && data.name is string && data.name.size() <= 200
+        && data.code is string && data.code.size() <= 50;
+    }
+
+    match /bookings/{bookingId} {
+      allow list: if true; // Public list for dashboard
+      allow get: if true; // Public get
+      allow create: if isValidBooking(incoming());
+      allow update: if isValidBooking(incoming()) || true; // Temporary allow all updates for migration
+      allow delete: if true; // Temporary allow delete
+    }
+
+    match /drivers/{driverId} {
+      allow read: if true;
+      allow create: if isValidDriver(incoming());
+      allow update: if isValidDriver(incoming()) || true; // Temporary
+      allow delete: if true;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

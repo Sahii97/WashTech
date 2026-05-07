@@ -1,0 +1,43 @@
+{
+  "entities": {
+    "booking": {
+      "title": "Booking",
+      "description": "A car wash booking order",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "neighborhood": { "type": "string" },
+        "gpsLocation": { "type": "string" },
+        "carType": { "type": "string" },
+        "package": { "type": "string" },
+        "date": { "type": "string" },
+        "slot": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "on_process", "completed", "rejected"] },
+        "driverId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "phone", "neighborhood", "carType", "package", "date", "slot", "status"]
+    },
+    "driver": {
+      "title": "Driver",
+      "description": "A driver in the system",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "code": { "type": "string" }
+      },
+      "required": ["name", "code"]
+    }
+  },
+  "firestore": {
+    "bookings/{bookingId}": {
+      "schema": { "$ref": "#/entities/booking" },
+      "description": "Main collection for bookings"
+    },
+    "drivers/{driverId}": {
+      "schema": { "$ref": "#/entities/driver" },
+      "description": "Main collection for drivers"
+    }
+  }
+}

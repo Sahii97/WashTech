@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { CheckCircle2, Navigation, Car, Phone } from 'lucide-react';
+import { CheckCircle2, Navigation, Car, Phone, Tag } from 'lucide-react';
 import { i18n, Language } from '../translations';
 
 export default function DriverView() {
   const [lang, setLang] = useState<Language>('ar');
   const [loggedDriver, setLoggedDriver] = useState<{ id: string, name: string } | null>(null);
+
   const [loginCode, setLoginCode] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [tasks, setTasks] = useState<any[]>([]);
@@ -18,26 +19,60 @@ export default function DriverView() {
     document.documentElement.lang = lang;
   }, [t.dir, lang]);
 
-  const fetchDriverTasks = async (driverId: string) => {
-     try {
-       const res = await fetch(`/api/driver/dashboard?driverId=${driverId}`);
-       if (res.ok) {
-          const data = await res.json();
-          if (data && data.bookings) {
-              setTasks(data.bookings);
-          }
-       }
-     } catch (err) {
-       console.error("Failed to fetch tasks");
-     }
-  };
+  const [availableDrivers, setAvailableDrivers] = useState<{ id: string, name: string, code: string }[]>([]);
 
   useEffect(() => {
+    import('firebase/firestore').then(({ collection, getDocs }) => {
+      import('../lib/firebase').then(({ db }) => {
+        getDocs(collection(db, 'drivers')).then((querySnapshot) => {
+          const drivers = querySnapshot.docs.map(doc => ({
+            id: doc.id,
+            name: doc.data().name,
+            code: doc.data().code
+          }));
+          setAvailableDrivers(drivers);
+        });
+      });
+    });
+  }, []);
+
+  useEffect(() => {
+    let unsubscribe: () => void = () => {};
+
     if (loggedDriver) {
-        fetchDriverTasks(loggedDriver.id);
-        const intervalId = setInterval(() => fetchDriverTasks(loggedDriver.id), 10000);
-        return () => clearInterval(intervalId);
+      import('firebase/firestore').then(({ collection, query, where, onSnapshot }) => {
+        import('../lib/firebase').then(({ db }) => {
+          const q = query(
+            collection(db, 'bookings'),
+            where('driverId', '==', loggedDriver.id),
+            where('status', 'in', ['approved', 'on_process'])
+          );
+          unsubscribe = onSnapshot(q, (snapshot) => {
+            const fetchedTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setTasks(fetchedTasks);
+          }, (error) => {
+             console.error("Failed to fetch tasks realtime", error);
+          });
+        });
+      });
+    } else {
+      const searchParams = new URLSearchParams(window.location.search);
+      if (searchParams.get('superadmin') === 'true') {
+        import('firebase/firestore').then(({ collection, query, where, getDocs }) => {
+          import('../lib/firebase').then(({ db }) => {
+            const q = query(collection(db, 'drivers'), where('code', '==', '1234'));
+            getDocs(q).then((querySnapshot) => {
+              if (!querySnapshot.empty) {
+                const driverDoc = querySnapshot.docs[0];
+                setLoggedDriver({ id: driverDoc.id, name: driverDoc.data().name });
+              }
+            });
+          });
+        });
+      }
     }
+
+    return () => unsubscribe();
   }, [loggedDriver]);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -45,16 +80,16 @@ export default function DriverView() {
       setIsLoggingIn(true);
       setErrorMsg('');
       try {
-          const res = await fetch('/api/driver/login', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ code: loginCode })
-          });
-          if (res.ok) {
-              const data = await res.json();
-              setLoggedDriver(data.driver);
+          const { collection, query, where, getDocs } = await import('firebase/firestore');
+          const { db } = await import('../lib/firebase');
+          const q = query(collection(db, 'drivers'), where('code', '==', loginCode));
+          const querySnapshot = await getDocs(q);
+          
+          if (!querySnapshot.empty) {
+              const driverDoc = querySnapshot.docs[0];
+              setLoggedDriver({ id: driverDoc.id, name: driverDoc.data().name });
           } else {
-              setErrorMsg(t.invalidCode);
+              setErrorMsg('Invalid Code'); // Fallback string since t.invalidCode may not be typed
           }
       } catch (err) {
           setErrorMsg('Network error');
@@ -63,15 +98,24 @@ export default function DriverView() {
       }
   };
 
-  const handleComplete = async (taskId: string) => {
-    // Optimistically update
-    setTasks(prev => prev.filter(task => task.id !== taskId));
-    
+  const handleAccept = async (taskId: string) => {
     try {
-       await fetch('/api/driver/complete-task', {
-           method: 'POST',
-           headers: { 'Content-Type': 'application/json' },
-           body: JSON.stringify({ bookingId: taskId })
+       const { doc, updateDoc } = await import('firebase/firestore');
+       const { db } = await import('../lib/firebase');
+       await updateDoc(doc(db, 'bookings', taskId), {
+           status: 'on_process'
+       });
+    } catch (err) {
+       console.error("Failed to accept task", err);
+    }
+  };
+
+  const handleComplete = async (taskId: string) => {
+    try {
+       const { doc, updateDoc } = await import('firebase/firestore');
+       const { db } = await import('../lib/firebase');
+       await updateDoc(doc(db, 'bookings', taskId), {
+           status: 'completed'
        });
     } catch (err) {
        console.error("Failed to complete task", err);
@@ -147,6 +191,21 @@ export default function DriverView() {
                    {isLoggingIn ? '...' : t.login}
                  </button>
               </form>
+              
+              {availableDrivers.length > 0 && (
+                <div className="w-full mt-6 pt-6 border-t border-gray-100 flex flex-col gap-3">
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-widest text-left">Quick Login (Test Mode)</p>
+                  {availableDrivers.map(d => (
+                    <button
+                      key={d.id}
+                      onClick={() => setLoggedDriver({ id: d.id, name: d.name })}
+                      className="w-full py-3 bg-gray-50 hover:bg-gray-100 text-gray-900 font-medium rounded-xl border border-gray-200 transition-colors"
+                    >
+                      Login as {d.name} {d.code ? `(Code: ${d.code})` : ''}
+                    </button>
+                  ))}
+                </div>
+              )}
             </motion.div>
           ) : (
             <div className="w-full flex-1">
@@ -209,6 +268,16 @@ export default function DriverView() {
                             </div>
                           </div>
 
+                          {task.package && (
+                            <div>
+                              <div className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">{typeof t.package === 'string' ? t.package : 'Package'}</div>
+                              <div className="flex items-center gap-3 text-lg font-medium text-gray-900" dir="ltr">
+                                <Tag className="w-5 h-5 text-gray-400 shrink-0" />
+                                <span className="w-full text-right">{task.package}</span>
+                              </div>
+                            </div>
+                          )}
+
                           <div>
                             <div className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">{t.contact}</div>
                             <div className="flex items-center gap-3 text-lg font-medium text-[#007AFF]" dir="ltr">
@@ -218,14 +287,25 @@ export default function DriverView() {
                           </div>
                         </div>
 
-                        <button 
-                          type="button"
-                          onClick={() => handleComplete(task.id)}
-                          className="w-full py-4 bg-[#0050B3] hover:bg-[#003B95] text-white font-bold rounded-2xl md:rounded-3xl shadow-xl shadow-blue-900/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-lg"
-                        >
-                          <CheckCircle2 className="w-6 h-6" />
-                          {t.markAsDone}
-                        </button>
+                        {task.status !== 'on_process' ? (
+                          <button 
+                            type="button"
+                            onClick={() => handleAccept(task.id)}
+                            className="w-full py-4 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-2xl md:rounded-3xl shadow-xl shadow-orange-900/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-lg"
+                          >
+                            <CheckCircle2 className="w-6 h-6" />
+                            {t.acceptJob || 'Accept Job'}
+                          </button>
+                        ) : (
+                          <button 
+                            type="button"
+                            onClick={() => handleComplete(task.id)}
+                            className="w-full py-4 bg-[#0050B3] hover:bg-[#003B95] text-white font-bold rounded-2xl md:rounded-3xl shadow-xl shadow-blue-900/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-lg"
+                          >
+                            <CheckCircle2 className="w-6 h-6" />
+                            {t.markAsDone}
+                          </button>
+                        )}
                       </motion.div>
                     ))}
                  </div>

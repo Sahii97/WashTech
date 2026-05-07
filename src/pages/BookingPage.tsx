@@ -13,6 +13,7 @@ export default function BookingPage() {
     phone: '',
     neighborhood: '',
     carType: '',
+    package: '',
     date: 'today' as 'today' | 'tomorrow',
     slot: '',
     gpsLocation: ''
@@ -20,9 +21,14 @@ export default function BookingPage() {
 
   const [status, setStatus] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
+  const [bookingId, setBookingId] = useState<string | null>(null);
+  const [bookingStatus, setBookingStatus] = useState<string>('pending');
   const [activeSheet, setActiveSheet] = useState<'neighborhood' | 'carType' | 'date' | null>(null);
   const [availableSlots, setAvailableSlots] = useState<string[] | null>(null);
   const [isGettingLocation, setIsGettingLocation] = useState(false);
+
+  const searchParams = new URLSearchParams(window.location.search);
+  const isSuperAdmin = searchParams.get('superadmin') === 'true';
 
   useEffect(() => {
     const fetchSlots = () => {
@@ -52,6 +58,21 @@ export default function BookingPage() {
     document.documentElement.dir = t.dir;
     document.documentElement.lang = lang;
   }, [lang, t.dir]);
+
+  useEffect(() => {
+    if (!bookingId) return;
+    let unsubscribe = () => {};
+    import('firebase/firestore').then(({ doc, onSnapshot }) => {
+      import('../lib/firebase').then(({ db }) => {
+        unsubscribe = onSnapshot(doc(db, 'bookings', bookingId), (snapshot) => {
+          if (snapshot.exists()) {
+             setBookingStatus(snapshot.data().status);
+          }
+        });
+      });
+    });
+    return () => unsubscribe();
+  }, [bookingId]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData(prev => ({
@@ -83,7 +104,7 @@ export default function BookingPage() {
     }
   };
 
-  const isFormValid = formData.name && formData.phone && formData.neighborhood && formData.carType && formData.slot && formData.date && formData.gpsLocation;
+  const isFormValid = formData.name && formData.phone && formData.neighborhood && formData.carType && formData.package && formData.slot && formData.date && formData.gpsLocation;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -91,26 +112,20 @@ export default function BookingPage() {
     setStatus('submitting');
     
     try {
-      const response = await fetch('/api/webhook', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ...formData,
-          language: lang,
-          submittedAt: new Date().toISOString()
-        }),
+      const { collection, addDoc } = await import('firebase/firestore');
+      const { db } = await import('../lib/firebase');
+      
+      const docRef = await addDoc(collection(db, 'bookings'), {
+        ...formData,
+        status: 'pending',
+        language: lang,
+        submittedAt: new Date().toISOString()
       });
       
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error || 'API proxy error');
-      }
-      
+      setBookingId(docRef.id);
+      setBookingStatus('pending');
       setStatus('success');
-      setFormData({ name: '', phone: '', neighborhood: '', carType: '', date: 'today', slot: '', gpsLocation: '' });
+      setFormData({ name: '', phone: '', neighborhood: '', carType: '', package: '', date: 'today', slot: '', gpsLocation: '' });
       setErrorMessage('');
     } catch (error) {
       console.error('Submission error:', error);
@@ -125,6 +140,7 @@ export default function BookingPage() {
       phone: '+9647809471576',
       neighborhood: t.neighborhoods[0],
       carType: Object.keys(t.carTypes)[0],
+      package: Object.keys(t.packages)[0],
       date: 'today' as 'today' | 'tomorrow',
       slot: Object.keys(t.slots)[0],
       gpsLocation: '36.1901,44.0089'
@@ -134,26 +150,20 @@ export default function BookingPage() {
     setStatus('submitting');
     
     try {
-      const response = await fetch('/api/webhook', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ...testData,
-          language: lang,
-          submittedAt: new Date().toISOString()
-        }),
+      const { collection, addDoc } = await import('firebase/firestore');
+      const { db } = await import('../lib/firebase');
+      
+      const docRef = await addDoc(collection(db, 'bookings'), {
+        ...testData,
+        status: 'pending',
+        language: lang,
+        submittedAt: new Date().toISOString()
       });
       
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error || 'API proxy error');
-      }
-      
+      setBookingId(docRef.id);
+      setBookingStatus('pending');
       setStatus('success');
-      setFormData({ name: '', phone: '', neighborhood: '', carType: '', date: 'today', slot: '', gpsLocation: '' });
+      setFormData({ name: '', phone: '', neighborhood: '', carType: '', package: '', date: 'today', slot: '', gpsLocation: '' });
       setErrorMessage('');
     } catch (error) {
       console.error('Submission error:', error);
@@ -264,12 +274,6 @@ export default function BookingPage() {
                  کوردی
               </button>
            </div>
-           
-           <div className="flex items-center gap-4 z-10 hidden lg:flex">
-             {/* Test Links */}
-             <a href="/manager" className="text-xs text-white/50 hover:text-white transition-colors bg-white/5 px-3 py-1.5 rounded-full">Manager (Test)</a>
-             <a href="/driver" className="text-xs text-white/50 hover:text-white transition-colors bg-white/5 px-3 py-1.5 rounded-full">Driver (Test)</a>
-           </div>
         </div>
         
         {/* Logo and Slogan */}
@@ -289,15 +293,44 @@ export default function BookingPage() {
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }} 
               animate={{ scale: 1, opacity: 1 }} 
-              className="flex flex-col items-center justify-center text-center mt-4 lg:mt-24 bg-white p-8 lg:p-12 rounded-3xl shadow-sm"
+              className="flex flex-col items-center justify-center text-center mt-4 lg:mt-8 bg-white p-8 lg:p-12 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.06)]"
             >
               <CheckCircle2 className="w-16 h-16 lg:w-20 lg:h-20 text-[#007AFF] mb-4" />
               <h2 className="text-2xl lg:text-3xl font-bold text-gray-900 mb-2">{t.success}</h2>
-              <p className="text-gray-500 lg:text-lg">{t.successSubtitle}</p>
+              <p className="text-gray-500 lg:text-lg mb-8 max-w-sm mx-auto">{t.successSubtitle}</p>
               
+              <div className="w-full flex flex-col gap-4 relative isolate text-start mb-8">
+                {['pending', 'approved', 'on_process', 'completed'].map((step, idx) => {
+                  const stepIndex = ['pending', 'approved', 'on_process', 'completed'].indexOf(bookingStatus);
+                  const isCompleted = idx < stepIndex;
+                  const isCurrent = idx === stepIndex;
+                  const isPending = idx > stepIndex;
+                  
+                  let stepLabel = '';
+                  if (step === 'pending') stepLabel = t.trackPending;
+                  if (step === 'approved') stepLabel = t.trackApproved;
+                  if (step === 'on_process') stepLabel = t.trackOnProcess;
+                  if (step === 'completed') stepLabel = t.trackCompleted;
+
+                  return (
+                     <div key={step} className="flex gap-4 items-center relative">
+                        {idx !== 3 && (
+                           <div className={`absolute ${isRtl ? 'right-[15px]' : 'left-[15px]'} top-8 w-[2px] h-8 -z-10 ${isCompleted ? 'bg-[#007AFF]' : 'bg-gray-100'}`} />
+                        )}
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 shrink-0 bg-white ${isCompleted || isCurrent ? 'border-[#007AFF] text-[#007AFF]' : 'border-gray-200 text-gray-300'} ${isCompleted ? 'bg-[#007AFF] text-white' : ''}`}>
+                          {isCompleted ? <Check className="w-4 h-4" /> : <div className={`w-2.5 h-2.5 rounded-full ${isCurrent ? 'bg-[#007AFF]' : 'bg-gray-200'}`} />}
+                        </div>
+                        <span className={`font-semibold text-[15px] ${isCompleted || isCurrent ? 'text-gray-900' : 'text-gray-400'}`}>
+                           {stepLabel}
+                        </span>
+                     </div>
+                  );
+                })}
+              </div>
+
               <button 
                 onClick={() => setStatus('idle')}
-                className="mt-8 text-[#007AFF] font-medium text-[17px] hover:bg-blue-50 transition-colors rounded-xl px-6 active:opacity-50 py-3"
+                className="w-full text-white bg-[#007AFF] font-bold text-[17px] hover:bg-blue-600 shadow-xl shadow-blue-500/20 transition-all rounded-2xl px-6 active:scale-[0.98] py-4"
               >
                 {t.done}
               </button>
@@ -395,6 +428,35 @@ export default function BookingPage() {
                       </div>
                     </div>
                  </div>
+              </div>
+
+              {/* Packages Group */}
+              <div>
+                <div className="pl-4 mb-3 text-[13px] text-gray-400 font-semibold tracking-wide uppercase">{t.package}</div>
+                <div className="flex flex-nowrap overflow-x-auto pb-4 px-1 -mx-1 snap-x scroll-p-1 gap-4 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none']">
+                  {Object.entries(t.packages as Record<string, {name: string, price: string, desc: string}>).map(([key, pkg]) => (
+                    <div
+                      key={key}
+                      onClick={() => setFormData({...formData, package: key})}
+                      className={`shrink-0 w-72 p-5 rounded-3xl cursor-pointer transition-all snap-start border-2 ${
+                        formData.package === key 
+                          ? 'bg-[#007AFF] text-white border-[#007AFF] shadow-lg shadow-blue-500/30' 
+                          : 'bg-white text-gray-900 border-gray-100 shadow-sm'
+                      }`}
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <h3 className="font-bold text-lg">{pkg.name}</h3>
+                        {formData.package === key && <CheckCircle2 className="w-6 h-6 text-white" />}
+                      </div>
+                      <div className={`text-2xl font-bold mb-3 ${formData.package === key ? 'text-white' : 'text-[#007AFF]'}`}>
+                        {pkg.price}
+                      </div>
+                      <p className={`text-[15px] leading-relaxed ${formData.package === key ? 'text-blue-50' : 'text-gray-500'}`}>
+                        {pkg.desc}
+                      </p>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               {/* Slots modern dropdown */}
