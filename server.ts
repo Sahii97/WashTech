@@ -9,9 +9,17 @@ async function startServer() {
   // Middleware to parse JSON body
   app.use(express.json());
 
-  // n8n webhook URL — set N8N_WEBHOOK_URL in AI Studio Secrets (or .env) to override
-  const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'https://fahad97.app.n8n.cloud/webhook/manager-approval';
-  console.log(`[n8n] Using webhook URL: ${N8N_WEBHOOK_URL}`);
+  // n8n has TWO separate webhooks — set these in AI Studio Secrets panel (or .env):
+  //   N8N_BOOKING_WEBHOOK_URL  → "Collecter" node — triggered when a customer submits a new booking
+  //   N8N_APPROVAL_WEBHOOK_URL → "Webhook" node   — triggered when a manager approves/rejects
+  // For TESTING: use the webhook-test/... URLs shown when you click "Listen for test event" in n8n.
+  // For PRODUCTION: use the webhook/... URLs (workflow must be active).
+  const N8N_BOOKING_URL = process.env.N8N_BOOKING_WEBHOOK_URL
+    || 'https://fahad97.app.n8n.cloud/webhook/7fcc4e77-6172-4476-a706-2864a4a0ae92';
+  const N8N_APPROVAL_URL = process.env.N8N_APPROVAL_WEBHOOK_URL
+    || 'https://fahad97.app.n8n.cloud/webhook/manager-approval';
+  console.log(`[n8n] Booking URL:  ${N8N_BOOKING_URL}`);
+  console.log(`[n8n] Approval URL: ${N8N_APPROVAL_URL}`);
 
   // In-memory store for available slots synced from n8n
   let availableSlots: any[] = [
@@ -82,19 +90,17 @@ async function startServer() {
     }
   });
 
-  // 4. Proxy for n8n Webhooks to avoid CORS issues
+  // 4. Proxy for n8n Webhooks to avoid CORS issues (new bookings → Collecter webhook)
   app.post('/api/proxy-n8n', async (req, res) => {
     try {
-      const N8N_URL = N8N_WEBHOOK_URL;
-      
       // Convert body to query parameters because n8n nodes are looking at $json.query
       const params = new URLSearchParams();
       for (const [key, value] of Object.entries(req.body)) {
         params.append(key, String(value));
       }
 
-      const finalUrl = `${N8N_URL}?${params.toString()}`;
-      console.log('Proxying to n8n:', finalUrl);
+      const finalUrl = `${N8N_BOOKING_URL}?${params.toString()}`;
+      console.log('Proxying new booking to n8n Collecter:', finalUrl);
 
       const response = await fetch(finalUrl, {
         method: 'POST',
@@ -147,11 +153,9 @@ async function startServer() {
     res.status(200).json({ bookings: activeBookings });
   });
 
-  // Proxy Route for New Booking (To n8n)
+  // Proxy Route for New Booking (To n8n Collecter webhook)
   app.post('/api/webhook', async (req, res) => {
     try {
-      const webhookUrl = N8N_WEBHOOK_URL;
-      
       const orderId = `ORD-${Math.floor(Math.random() * 10000)}`;
 
       const queryParams = new URLSearchParams();
@@ -160,8 +164,8 @@ async function startServer() {
         queryParams.append(key, String(value));
       });
       
-      const finalUrl = `${webhookUrl}?${queryParams.toString()}`;
-      console.log(`Sending GET to n8n webhook: ${finalUrl}`);
+      const finalUrl = `${N8N_BOOKING_URL}?${queryParams.toString()}`;
+      console.log(`[n8n] Sending new booking to Collecter: ${finalUrl}`);
       
       try {
         const response = await fetch(finalUrl, {
@@ -195,40 +199,51 @@ async function startServer() {
     }
   });
 
-  // Proxy Route for Manager Approving/Rejecting Booking (To n8n)
+  // Proxy Route for Manager Approving/Rejecting Booking (To n8n manager-approval webhook)
   app.post('/api/manager/action', async (req, res) => {
     try {
-      const actionWebhookUrl = N8N_WEBHOOK_URL;
-      
       const { bookingId, driverId, action } = req.body;
-      
+
+      // Grab the full booking BEFORE mutating state — n8n needs all fields for Cleanup Data + Google Sheets
+      const booking = activeBookings.find(b => b.id === bookingId);
+
       if (action === 'approve') {
-        activeBookings = activeBookings.map(b => 
-           b.id === bookingId ? { ...b, status: 'approved', driverId } : b
+        activeBookings = activeBookings.map(b =>
+          b.id === bookingId ? { ...b, status: 'approved', driverId } : b
         );
       } else if (action === 'reject') {
         activeBookings = activeBookings.filter(b => b.id !== bookingId);
       }
 
-      const queryParams = new URLSearchParams({ 
-        bookingId, 
+      // Send full booking data so n8n's "Cleanup Data" agent and "Save to Google Sheets" work correctly.
+      // n8n reads these via $json.query.* (GET query params).
+      const queryParams = new URLSearchParams({
+        bookingId,
         driverId: driverId || 'none',
-        status: action === 'approve' ? 'approved' : 'rejected'
+        status: action === 'approve' ? 'approved' : 'rejected',
+        name: booking?.name || '',
+        phone: booking?.phone || '',
+        neighborhood: booking?.neighborhood || '',
+        carType: booking?.carType || '',
+        slot: booking?.slot || '',
+        package: booking?.package || '',
+        date: booking?.date || '',
       });
-      
+
       try {
-        const response = await fetch(`${actionWebhookUrl}?${queryParams.toString()}`, {
+        const response = await fetch(`${N8N_APPROVAL_URL}?${queryParams.toString()}`, {
           method: 'GET',
           headers: { 'Accept': 'application/json' }
         });
-        
         if (!response.ok) {
-           console.warn("n8n manager action webhook not live yet, but we updated local state.", response.status);
+          console.warn(`[n8n] Approval webhook responded ${response.status} — local state still updated.`);
+        } else {
+          console.log(`[n8n] Approval sent for booking ${bookingId} (${action})`);
         }
       } catch (err) {
-        console.warn("n8n manager action webhook fetch failed. Just updating local state.", err);
+        console.warn('[n8n] Approval webhook unreachable — local state still updated.', err);
       }
-      
+
       res.status(200).json({ success: true, message: `Manager action ${action} processed` });
     } catch (error) {
       console.error('Manager action proxy error:', error);
@@ -277,17 +292,25 @@ async function startServer() {
         `);
       }
 
-      const actionWebhookUrl = N8N_WEBHOOK_URL;
-      const queryParams = new URLSearchParams({ 
-        bookingId: matchedBookingId, 
+      // Find the full booking to send all fields to n8n
+      const approvedBooking = activeBookings.find(b => b.id === matchedBookingId);
+      const smsQueryParams = new URLSearchParams({
+        bookingId: matchedBookingId,
         driverId: availableDrivers[0]?.id || 'none',
-        status: 'approved'
+        status: 'approved',
+        name: approvedBooking?.name || '',
+        phone: approvedBooking?.phone || '',
+        neighborhood: approvedBooking?.neighborhood || '',
+        carType: approvedBooking?.carType || '',
+        slot: approvedBooking?.slot || '',
+        package: approvedBooking?.package || '',
+        date: approvedBooking?.date || '',
       });
-      
+
       try {
-        await fetch(`${actionWebhookUrl}?${queryParams.toString()}`, { method: 'GET' });
+        await fetch(`${N8N_APPROVAL_URL}?${smsQueryParams.toString()}`, { method: 'GET' });
       } catch (err) {
-        console.warn("n8n manager approval webhook fetch failed.", err);
+        console.warn('[n8n] SMS approval webhook fetch failed.', err);
       }
 
       res.send(`
