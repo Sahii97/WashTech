@@ -131,6 +131,23 @@ async function startServer() {
   });
 
   // --- Manager Endpoints ---
+
+  // Health check — visit /api/health to confirm which code version is running
+  app.get('/api/health', async (req, res) => {
+    let n8nReachable = false;
+    try {
+      const testRes = await fetch(N8N_BOOKING_URL, { method: 'GET', signal: AbortSignal.timeout(5000) });
+      n8nReachable = testRes.status !== 0;
+    } catch (_) {}
+    res.json({
+      status: 'ok',
+      codeVersion: '2.1-n8n-fix',
+      n8nBookingUrl: N8N_BOOKING_URL,
+      n8nApprovalUrl: N8N_APPROVAL_URL,
+      n8nReachable
+    });
+  });
+
   app.post('/api/manager/login', (req, res) => {
     const { password } = req.body;
     // In production this should be a strong env variable
