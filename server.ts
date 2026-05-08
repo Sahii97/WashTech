@@ -118,7 +118,7 @@ async function startServer() {
     }
   });
 
-  // 3. Endpoint for n8n to sync the latest pending orders/bookings to the manager
+  // 5. Endpoint for n8n to sync the latest pending orders/bookings to the manager
   app.post('/api/update-bookings', (req, res) => {
     try {
       activeBookings = Array.isArray(req.body) ? req.body : (req.body.bookings || req.body);
@@ -131,9 +131,25 @@ async function startServer() {
   });
 
   // --- Manager Endpoints ---
+
+  // Health check — visit /api/health to confirm which code version is running on Cloud Run
+  app.get('/api/health', async (req, res) => {
+    let n8nReachable = false;
+    try {
+      const testRes = await fetch(N8N_BOOKING_URL, { method: 'GET', signal: AbortSignal.timeout(5000) });
+      n8nReachable = testRes.status !== 0;
+    } catch (_) {}
+    res.json({
+      status: 'ok',
+      codeVersion: '2.1-n8n-fix',
+      n8nBookingUrl: N8N_BOOKING_URL,
+      n8nApprovalUrl: N8N_APPROVAL_URL,
+      n8nReachable
+    });
+  });
+
   app.post('/api/manager/login', (req, res) => {
     const { password } = req.body;
-    // In production this should be a strong env variable
     if (password === 'admin123') {
       res.json({ success: true, token: 'manager-token-abc' });
     } else {
@@ -176,17 +192,12 @@ async function startServer() {
         });
 
         if (!response.ok) {
-          if (response.status === 404) {
-             console.warn('n8n webhook is not responding with 404. Proceeding with local mock.');
-          } else {
-             console.warn(`n8n responded with HTTP ${response.status}. Proceeding with local mock.`);
-          }
+          console.warn(`n8n responded with HTTP ${response.status}. Proceeding with local mock.`);
         }
       } catch (fetchError) {
         console.warn('Failed to fetch from n8n webhook, proceeding with local mock.', fetchError);
       }
       
-      // Temporary: Since n8n isn't sending booking data back yet, we will mock adding it to the manager list
       const newBooking = {
          id: orderId,
          ...req.body,
@@ -206,7 +217,6 @@ async function startServer() {
     try {
       const { bookingId, driverId, action } = req.body;
 
-      // Grab the full booking BEFORE mutating state — n8n needs all fields for Cleanup Data + Google Sheets
       const booking = activeBookings.find(b => b.id === bookingId);
 
       if (action === 'approve') {
@@ -217,8 +227,6 @@ async function startServer() {
         activeBookings = activeBookings.filter(b => b.id !== bookingId);
       }
 
-      // Send full booking data so n8n's "Cleanup Data" agent and "Save to Google Sheets" work correctly.
-      // n8n reads these via $json.query.* (GET query params).
       const queryParams = new URLSearchParams({
         bookingId,
         driverId: driverId || 'none',
@@ -262,20 +270,17 @@ async function startServer() {
         return res.status(400).send('Missing bookingId or phone');
       }
 
-      // Find and update local booking
       let found = false;
       let matchedBookingId = '';
       
       activeBookings = activeBookings.map(b => {
         const matchById = bookingId && (b.id === bookingId || b.id === decodeURIComponent(bookingId));
-        // Remove pluses/spaces from phones for comparison
         const formatPhone = (p: string) => p?.replace(/\D/g, '');
         const matchByPhone = phoneParam && (formatPhone(b.phone) === formatPhone(phoneParam));
         
         if (!found && (matchById || matchByPhone)) {
           found = true;
           matchedBookingId = b.id;
-          // Assign the first available driver as default since SMS approval doesn't pick one
           return { ...b, status: 'approved', driverId: availableDrivers[0]?.id };
         }
         return b;
@@ -294,7 +299,6 @@ async function startServer() {
         `);
       }
 
-      // Find the full booking to send all fields to n8n
       const approvedBooking = activeBookings.find(b => b.id === matchedBookingId);
       const smsQueryParams = new URLSearchParams({
         bookingId: matchedBookingId,
@@ -321,7 +325,7 @@ async function startServer() {
           <div style="background: white; padding: 30px; border-radius: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); display: inline-block; max-width: 400px;">
              <div style="background: #34c759; color: white; width: 60px; height: 60px; border-radius: 30px; display: flex; align-items: center; justify-content: center; font-size: 30px; margin: 0 auto 20px;">✓</div>
              <h2 style="color: #1c1c1e; margin-top: 0; margin-bottom: 10px;">Booking Approved!</h2>
-             <p style="color: #8e8e93; font-size: 14px; margin-bottom: 24px;">Booking <strong>${bookingId}</strong> has been confirmed and assigned to the default driver.</p>
+             <p style="color: #8e8e93; font-size: 14px; margin-bottom: 24px;">Booking <strong>${bookingId}</strong> has been confirmed.</p>
              <a href="/manager" style="display:inline-block; padding: 12px 24px; background: #007aff; color: white; text-decoration: none; border-radius: 12px; font-weight: bold; width: 100%; box-sizing: border-box;">Open Manager Dashboard</a>
           </div>
         </body></html>
@@ -331,20 +335,15 @@ async function startServer() {
     }
   });
 
-  // API Route to check booking status (for n8n to GET)
   app.get('/api/booking-status', (req, res) => {
     const bookingId = req.query.bookingId as string;
     if (!bookingId) {
       return res.status(400).json({ error: 'Missing bookingId parameter' });
     }
-    
-    // Find booking
     const booking = activeBookings.find(b => b.id === bookingId);
-    
     if (booking) {
       res.json({ id: booking.id, status: booking.status, driverId: booking.driverId });
     } else {
-      // If not in activeBookings it might be rejected or not found
       res.json({ id: bookingId, status: 'rejected_or_not_found' });
     }
   });
