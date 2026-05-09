@@ -88,21 +88,18 @@ export default function ManagerDashboard() {
     }
        
     try {
-      const { doc, updateDoc, deleteDoc } = await import('firebase/firestore');
-      const { db } = await import('../lib/firebase');
-      
-      if (action === 'approve') {
-         await updateDoc(doc(db, 'bookings', id), {
-            status: 'approved',
-            driverId: selectedDrivers[id],
-            approvedAt: new Date().toISOString()
-         });
-      } else if (action === 'reject') {
-         await deleteDoc(doc(db, 'bookings', id));
+      const res = await fetch('/api/manager/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookingId: id, action, driverId: selectedDrivers[id] }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Server error');
       }
     } catch (error) {
-        console.error(`Error processing ${action}:`, error);
-        alert(`Failed to ${action} order`);
+      console.error(`Error processing ${action}:`, error);
+      alert(`Failed to ${action} order`);
     }
   };
 

@@ -100,13 +100,13 @@ export default function DriverView() {
 
   const handleAccept = async (taskId: string) => {
     try {
-       const { doc, updateDoc } = await import('firebase/firestore');
-       const { db } = await import('../lib/firebase');
-       await updateDoc(doc(db, 'bookings', taskId), {
-           status: 'on_process'
-       });
+      await fetch('/api/driver/accept-task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookingId: taskId, driverId: loggedDriver?.id }),
+      });
     } catch (err) {
-       console.error("Failed to accept task", err);
+      console.error("Failed to accept task", err);
     }
   };
 
