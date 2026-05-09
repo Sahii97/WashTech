@@ -188,6 +188,66 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  // Test a single notification event with dummy data
+  app.post('/api/admin/test-notification', async (req, res) => {
+    const { event, testPhone } = req.body as { event: EventKey; testPhone?: string };
+    if (!event) return res.status(400).json({ error: 'Missing event' });
+
+    const to = testPhone || MANAGER_PHONE;
+
+    const DUMMY: Record<EventKey, Record<string, string>> = {
+      new_booking: {
+        id: 'TEST1', name: 'محمد أحمد', phone: to,
+        neighborhood: 'عنكاوة', carType: 'سيدان',
+        package: 'غسيل كامل', date: 'اليوم', slot: '10:00 AM',
+      },
+      booking_approved: {
+        name: 'محمد أحمد', phone: to, neighborhood: 'عنكاوة',
+        slot: '10:00 AM', driverName: 'علي', driverPhone: to,
+      },
+      driver_accepted: {
+        name: 'محمد أحمد', phone: to, driverName: 'علي', slot: '10:00 AM',
+      },
+      booking_rejected: {
+        name: 'محمد أحمد', phone: to,
+      },
+    };
+
+    try {
+      // Build the message text so we can preview it in the response
+      const templates = await getTemplates();
+      const cfg = templates[event];
+      const text = cfg?.enabled ? applyTemplate(cfg.template, DUMMY[event]) : '(disabled)';
+
+      await notify(event, DUMMY[event], to);
+      res.json({ success: true, sentTo: to, preview: text });
+    } catch (e) {
+      console.error('[test-notification]', e);
+      res.status(500).json({ error: 'Failed to send test' });
+    }
+  });
+
+  // Test all 4 events in sequence with 800ms delay between each
+  app.post('/api/admin/test-all-notifications', async (req, res) => {
+    const { testPhone } = req.body as { testPhone?: string };
+    const to = testPhone || MANAGER_PHONE;
+
+    res.json({ success: true, message: 'Sending all 4 test notifications...', sentTo: to });
+
+    const events: EventKey[] = ['new_booking', 'booking_approved', 'driver_accepted', 'booking_rejected'];
+    const DUMMY: Record<EventKey, Record<string, string>> = {
+      new_booking:      { id: 'TEST1', name: 'محمد أحمد', phone: to, neighborhood: 'عنكاوة', carType: 'سيدان', package: 'غسيل كامل', date: 'اليوم', slot: '10:00 AM' },
+      booking_approved: { name: 'محمد أحمد', phone: to, neighborhood: 'عنكاوة', slot: '10:00 AM', driverName: 'علي', driverPhone: to },
+      driver_accepted:  { name: 'محمد أحمد', phone: to, driverName: 'علي', slot: '10:00 AM' },
+      booking_rejected: { name: 'محمد أحمد', phone: to },
+    };
+
+    for (const event of events) {
+      await notify(event, DUMMY[event], to);
+      await new Promise(r => setTimeout(r, 800));
+    }
+  });
+
   app.post('/api/manager/login', (req, res) => {
     const { password } = req.body;
     // In production this should be a strong env variable

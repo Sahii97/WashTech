@@ -182,6 +182,43 @@ export default function ManagerDashboard() {
     } catch (e) { console.error(e); }
     setTemplateSaving(prev => ({ ...prev, [key]: false }));
   }
+  const [testPhone, setTestPhone] = useState('');
+  const [testing, setTesting] = useState<Record<string, boolean>>({});
+  const [testResult, setTestResult] = useState<Record<string, string>>({});
+  const [testingAll, setTestingAll] = useState(false);
+  const [testAllResult, setTestAllResult] = useState('');
+
+  async function testEvent(key: EventKey) {
+    setTesting(prev => ({ ...prev, [key]: true }));
+    setTestResult(prev => ({ ...prev, [key]: '' }));
+    try {
+      const res = await fetch('/api/admin/test-notification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event: key, testPhone: testPhone.trim() || undefined }),
+      });
+      const d = await res.json();
+      setTestResult(prev => ({ ...prev, [key]: d.success ? `✓ Sent to ${d.sentTo}` : `✗ ${d.error}` }));
+    } catch { setTestResult(prev => ({ ...prev, [key]: '✗ Network error' })); }
+    setTesting(prev => ({ ...prev, [key]: false }));
+    setTimeout(() => setTestResult(prev => ({ ...prev, [key]: '' })), 4000);
+  }
+
+  async function testAll() {
+    setTestingAll(true);
+    setTestAllResult('Sending 4 messages...');
+    try {
+      const res = await fetch('/api/admin/test-all-notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ testPhone: testPhone.trim() || undefined }),
+      });
+      const d = await res.json();
+      setTestAllResult(d.success ? `✓ All sent to ${d.sentTo}` : `✗ ${d.error}`);
+    } catch { setTestAllResult('✗ Network error'); }
+    setTestingAll(false);
+    setTimeout(() => setTestAllResult(''), 5000);
+  }
   // ─────────────────────────────────────────────────────────────
 
   const handleCreateDriver = async (e: React.FormEvent) => {
@@ -635,6 +672,33 @@ export default function ManagerDashboard() {
           {activeTab === 'notifications' && (
             <motion.div key="notifications" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 pb-32 px-5 pt-6">
               <h2 className="text-xl font-bold text-gray-900">{t.notificationsTab}</h2>
+
+              {/* Test panel */}
+              <div className="bg-[#1c1c1e] rounded-[20px] p-4 space-y-3">
+                <p className="text-white text-sm font-bold tracking-wide">🧪 Test Notifications</p>
+                <input
+                  type="tel"
+                  dir="ltr"
+                  placeholder={`Test phone (default: manager phone)`}
+                  value={testPhone}
+                  onChange={e => setTestPhone(e.target.value)}
+                  className="w-full bg-white/10 text-white placeholder-white/30 border border-white/10 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-white/20"
+                />
+                <button
+                  type="button"
+                  onClick={testAll}
+                  disabled={testingAll}
+                  className="w-full py-3 bg-[#FF9F0A] hover:bg-amber-500 disabled:opacity-50 text-white font-bold rounded-xl text-sm transition-all"
+                >
+                  {testingAll ? 'Sending...' : '⚡ Test Full Cycle (all 4 events)'}
+                </button>
+                {testAllResult && (
+                  <p className={`text-xs font-mono text-center ${testAllResult.startsWith('✓') ? 'text-green-400' : 'text-red-400'}`}>
+                    {testAllResult}
+                  </p>
+                )}
+              </div>
+
               {EVENT_META.map(meta => {
                 const cfg = templates[meta.key];
                 const isSaving = !!templateSaving[meta.key];
@@ -687,17 +751,32 @@ export default function ManagerDashboard() {
                           placeholder="اكتب رسالة الواتساب هنا..."
                         />
 
-                        {/* Save button */}
-                        <button
-                          type="button"
-                          onClick={() => saveTemplate(meta.key)}
-                          disabled={isSaving}
-                          className={`mt-2 w-full py-2.5 rounded-xl font-semibold text-sm transition-all ${
-                            isSaved ? 'bg-green-500 text-white' : 'bg-[#007AFF] hover:bg-blue-600 text-white shadow-lg shadow-blue-500/20'
-                          } disabled:opacity-50`}
-                        >
-                          {isSaving ? '...' : isSaved ? '✓ Saved' : 'Save'}
-                        </button>
+                        {/* Save + Test buttons */}
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => saveTemplate(meta.key)}
+                            disabled={isSaving}
+                            className={`flex-1 py-2.5 rounded-xl font-semibold text-sm transition-all ${
+                              isSaved ? 'bg-green-500 text-white' : 'bg-[#007AFF] hover:bg-blue-600 text-white shadow-lg shadow-blue-500/20'
+                            } disabled:opacity-50`}
+                          >
+                            {isSaving ? '...' : isSaved ? '✓ Saved' : 'Save'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => testEvent(meta.key)}
+                            disabled={!!testing[meta.key]}
+                            className="px-4 py-2.5 bg-[#1c1c1e] hover:bg-gray-800 disabled:opacity-50 text-white font-semibold rounded-xl text-sm transition-all"
+                          >
+                            {testing[meta.key] ? '...' : '🧪'}
+                          </button>
+                        </div>
+                        {testResult[meta.key] && (
+                          <p className={`text-xs mt-1 font-mono ${testResult[meta.key].startsWith('✓') ? 'text-green-600' : 'text-red-500'}`}>
+                            {testResult[meta.key]}
+                          </p>
+                        )}
                       </>
                     )}
                   </div>
