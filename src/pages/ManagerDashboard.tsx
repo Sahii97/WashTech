@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Car, CheckCircle2, Clock, MapPin, User, Check, X, ChevronDown, Tag } from 'lucide-react';
 import { i18n, Language } from '../translations';
@@ -40,7 +40,7 @@ export default function ManagerDashboard() {
     }
   };
 
-  const [activeTab, setActiveTab] = useState<'orders' | 'expenses' | 'drivers'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'expenses' | 'drivers' | 'notifications'>('orders');
   const [orders, setOrders] = useState<any[]>([]);
   const [driversList, setDriversList] = useState<any[]>([]);
 
@@ -105,6 +105,84 @@ export default function ManagerDashboard() {
 
   const [newDriverName, setNewDriverName] = useState('');
   const [newDriverCode, setNewDriverCode] = useState('');
+
+  // ── Notification templates ────────────────────────────────────
+  type EventKey = 'new_booking' | 'booking_approved' | 'driver_accepted' | 'booking_rejected';
+  interface TemplateConfig { enabled: boolean; template: string; }
+  type Templates = Record<EventKey, TemplateConfig>;
+
+  const EVENT_META: { key: EventKey; labelAr: string; labelKu: string; recipientAr: string; recipientKu: string; vars: string[] }[] = [
+    {
+      key: 'new_booking',
+      labelAr: '📦 حجز جديد', labelKu: '📦 حجزی نوێ',
+      recipientAr: 'يُرسل إلى: المدير', recipientKu: 'دەنێردرێت بۆ: بەڕێوەبەر',
+      vars: ['id','name','phone','neighborhood','carType','package','date','slot'],
+    },
+    {
+      key: 'booking_approved',
+      labelAr: '✅ حجز مُوافق عليه', labelKu: '✅ حجزی پەسەندکراو',
+      recipientAr: 'يُرسل إلى: السائق', recipientKu: 'دەنێردرێت بۆ: شۆفێر',
+      vars: ['name','phone','neighborhood','slot','driverName','driverPhone'],
+    },
+    {
+      key: 'driver_accepted',
+      labelAr: '🚗 السائق في الطريق', labelKu: '🚗 شۆفێر لە ڕێگایە',
+      recipientAr: 'يُرسل إلى: العميل', recipientKu: 'دەنێردرێت بۆ: کڕیار',
+      vars: ['name','phone','driverName','slot'],
+    },
+    {
+      key: 'booking_rejected',
+      labelAr: '❌ حجز مرفوض', labelKu: '❌ حجزی ڕەتکراو',
+      recipientAr: 'يُرسل إلى: العميل', recipientKu: 'دەنێردرێت بۆ: کڕیار',
+      vars: ['name','phone'],
+    },
+  ];
+
+  const DEFAULT_TEMPLATES: Templates = {
+    new_booking:      { enabled: true, template: '📦 حجز جديد #{{id}}\n👤 {{name}}\n📞 {{phone}}\n📍 {{neighborhood}}\n🚗 {{carType}} — {{package}}\n🕐 {{date}} {{slot}}' },
+    booking_approved: { enabled: true, template: '✅ لديك حجز جديد\n👤 {{name}}\n📞 {{phone}}\n📍 {{neighborhood}}\n🕐 {{slot}}\n\nافتح تطبيق السائق واضغط قبول المهمة' },
+    driver_accepted:  { enabled: true, template: '🚗 سائقك في الطريق إليك!\n👨‍💼 السائق: {{driverName}}\n🕐 الوقت: {{slot}}\nسيصل قريباً. شكراً لاختيارك WashTech! 🧼' },
+    booking_rejected: { enabled: true, template: '❌ عذراً، لم نتمكن من قبول حجزك في هذا الوقت.\nيرجى المحاولة مرة أخرى أو اختيار وقت آخر.\nWashTech 🚗' },
+  };
+
+  const [templates, setTemplates] = useState<Templates>(DEFAULT_TEMPLATES);
+  const [templateSaving, setTemplateSaving] = useState<Record<EventKey, boolean>>({} as any);
+  const [templateSaved, setTemplateSaved] = useState<Record<EventKey, boolean>>({} as any);
+  const textareaRefs = useRef<Record<EventKey, HTMLTextAreaElement | null>>({} as any);
+
+  useEffect(() => {
+    fetch('/api/admin/notification-templates')
+      .then(r => r.json())
+      .then(d => { if (d.templates) setTemplates(d.templates); })
+      .catch(console.error);
+  }, []);
+
+  function insertVar(key: EventKey, varName: string) {
+    const el = textareaRefs.current[key];
+    if (!el) return;
+    const start = el.selectionStart ?? el.value.length;
+    const end   = el.selectionEnd   ?? el.value.length;
+    const token = `{{${varName}}}`;
+    const next  = el.value.slice(0, start) + token + el.value.slice(end);
+    setTemplates(prev => ({ ...prev, [key]: { ...prev[key], template: next } }));
+    setTimeout(() => { el.selectionStart = el.selectionEnd = start + token.length; el.focus(); }, 0);
+  }
+
+  async function saveTemplate(key: EventKey) {
+    setTemplateSaving(prev => ({ ...prev, [key]: true }));
+    try {
+      const updated = { ...templates };
+      await fetch('/api/admin/notification-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ templates: updated }),
+      });
+      setTemplateSaved(prev => ({ ...prev, [key]: true }));
+      setTimeout(() => setTemplateSaved(prev => ({ ...prev, [key]: false })), 2000);
+    } catch (e) { console.error(e); }
+    setTemplateSaving(prev => ({ ...prev, [key]: false }));
+  }
+  // ─────────────────────────────────────────────────────────────
 
   const handleCreateDriver = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -552,17 +630,96 @@ export default function ManagerDashboard() {
               </div>
             </motion.div>
           )}
+
+          {/* ── Notifications tab ── */}
+          {activeTab === 'notifications' && (
+            <motion.div key="notifications" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 pb-32 px-5 pt-6">
+              <h2 className="text-xl font-bold text-gray-900">{t.notificationsTab}</h2>
+              {EVENT_META.map(meta => {
+                const cfg = templates[meta.key];
+                const isSaving = !!templateSaving[meta.key];
+                const isSaved  = !!templateSaved[meta.key];
+                const label    = lang === 'ar' ? meta.labelAr    : meta.labelKu;
+                const recipient= lang === 'ar' ? meta.recipientAr: meta.recipientKu;
+                return (
+                  <div key={meta.key} className="bg-white rounded-[24px] p-5 shadow-sm border border-gray-100">
+                    {/* Header */}
+                    <div className="flex items-center justify-between mb-3">
+                      <div>
+                        <p className="font-bold text-gray-900 text-base">{label}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{recipient}</p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={cfg.enabled}
+                          onChange={e => setTemplates(prev => ({ ...prev, [meta.key]: { ...prev[meta.key], enabled: e.target.checked } }))}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#34C759]" />
+                      </label>
+                    </div>
+
+                    {cfg.enabled && (
+                      <>
+                        {/* Variable chips */}
+                        <div className="flex flex-wrap gap-1.5 mb-2">
+                          {meta.vars.map(v => (
+                            <button
+                              key={v}
+                              type="button"
+                              onClick={() => insertVar(meta.key, v)}
+                              className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-[#007AFF] text-xs font-mono rounded-lg border border-blue-100 transition-colors"
+                            >
+                              {`{{${v}}}`}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Message textarea */}
+                        <textarea
+                          ref={el => { textareaRefs.current[meta.key] = el; }}
+                          value={cfg.template}
+                          onChange={e => setTemplates(prev => ({ ...prev, [meta.key]: { ...prev[meta.key], template: e.target.value } }))}
+                          rows={5}
+                          dir="auto"
+                          className="w-full bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-[#007AFF]/20 focus:border-[#007AFF] transition-all resize-none font-mono"
+                          placeholder="اكتب رسالة الواتساب هنا..."
+                        />
+
+                        {/* Save button */}
+                        <button
+                          type="button"
+                          onClick={() => saveTemplate(meta.key)}
+                          disabled={isSaving}
+                          className={`mt-2 w-full py-2.5 rounded-xl font-semibold text-sm transition-all ${
+                            isSaved ? 'bg-green-500 text-white' : 'bg-[#007AFF] hover:bg-blue-600 text-white shadow-lg shadow-blue-500/20'
+                          } disabled:opacity-50`}
+                        >
+                          {isSaving ? '...' : isSaved ? '✓ Saved' : 'Save'}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </motion.div>
+          )}
         </div>
 
         {/* Global Navigation Bar */}
-        <div className="fixed md:absolute bottom-0 inset-x-0 bg-white/90 backdrop-blur-xl border-t border-gray-200/50 pb-safe pt-2 px-6 flex justify-around shadow-[0_-10px_40px_rgba(0,0,0,0.05)] z-50">
-           <button type="button" onClick={() => setActiveTab('orders')} className={`flex flex-col items-center gap-1.5 p-3 w-24 transition-opacity ${activeTab === 'orders' ? 'opacity-100' : 'opacity-40 hover:opacity-70'}`}>
-             <svg className={`w-8 h-8 ${activeTab === 'orders' ? 'text-[#007AFF]' : 'text-gray-900'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
-             <span className={`text-base font-bold tracking-wide ${activeTab === 'orders' ? 'text-[#007AFF]' : 'text-gray-900'}`}>{t.ordersTab}</span>
+        <div className="fixed md:absolute bottom-0 inset-x-0 bg-white/90 backdrop-blur-xl border-t border-gray-200/50 pb-safe pt-2 px-4 flex justify-around shadow-[0_-10px_40px_rgba(0,0,0,0.05)] z-50">
+           <button type="button" onClick={() => setActiveTab('orders')} className={`flex flex-col items-center gap-1 p-2 w-20 transition-opacity ${activeTab === 'orders' ? 'opacity-100' : 'opacity-40 hover:opacity-70'}`}>
+             <svg className={`w-7 h-7 ${activeTab === 'orders' ? 'text-[#007AFF]' : 'text-gray-900'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+             <span className={`text-xs font-bold tracking-wide ${activeTab === 'orders' ? 'text-[#007AFF]' : 'text-gray-900'}`}>{t.ordersTab}</span>
            </button>
-           <button type="button" onClick={() => setActiveTab('drivers')} className={`flex flex-col items-center gap-1.5 p-3 w-24 transition-opacity ${activeTab === 'drivers' ? 'opacity-100' : 'opacity-40 hover:opacity-70'}`}>
-             <svg className={`w-8 h-8 ${activeTab === 'drivers' ? 'text-[#007AFF]' : 'text-gray-900'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
-             <span className={`text-base font-bold tracking-wide ${activeTab === 'drivers' ? 'text-[#007AFF]' : 'text-gray-900'}`}>{t.driversTab}</span>
+           <button type="button" onClick={() => setActiveTab('drivers')} className={`flex flex-col items-center gap-1 p-2 w-20 transition-opacity ${activeTab === 'drivers' ? 'opacity-100' : 'opacity-40 hover:opacity-70'}`}>
+             <svg className={`w-7 h-7 ${activeTab === 'drivers' ? 'text-[#007AFF]' : 'text-gray-900'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+             <span className={`text-xs font-bold tracking-wide ${activeTab === 'drivers' ? 'text-[#007AFF]' : 'text-gray-900'}`}>{t.driversTab}</span>
+           </button>
+           <button type="button" onClick={() => setActiveTab('notifications')} className={`flex flex-col items-center gap-1 p-2 w-20 transition-opacity ${activeTab === 'notifications' ? 'opacity-100' : 'opacity-40 hover:opacity-70'}`}>
+             <svg className={`w-7 h-7 ${activeTab === 'notifications' ? 'text-[#007AFF]' : 'text-gray-900'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
+             <span className={`text-xs font-bold tracking-wide ${activeTab === 'notifications' ? 'text-[#007AFF]' : 'text-gray-900'}`}>{t.notificationsTab}</span>
            </button>
         </div>
       </div>

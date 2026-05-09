@@ -20,25 +20,84 @@ const DEFAULT_SLOTS = [
 ];
 const DEFAULT_DRIVER = { id: 'd1', name: 'Ali', code: '1234', phone: '+9647809471576' };
 
+// ── Notification templates ──────────────────────────────────────
+// Each template supports {{variable}} placeholders.
+// Available per event:
+//   new_booking:      id, name, phone, neighborhood, carType, package, date, slot
+//   booking_approved: name, phone, neighborhood, slot, driverName, driverPhone
+//   driver_accepted:  name, phone, driverName, slot
+//   booking_rejected: name, phone
+
+export type EventKey = 'new_booking' | 'booking_approved' | 'driver_accepted' | 'booking_rejected';
+
+export interface TemplateConfig {
+  enabled: boolean;
+  template: string;
+}
+
+export type NotificationTemplates = Record<EventKey, TemplateConfig>;
+
+const DEFAULT_TEMPLATES: NotificationTemplates = {
+  new_booking: {
+    enabled: true,
+    template:
+      '📦 حجز جديد #{{id}}\n👤 {{name}}\n📞 {{phone}}\n📍 {{neighborhood}}\n🚗 {{carType}} — {{package}}\n🕐 {{date}} {{slot}}',
+  },
+  booking_approved: {
+    enabled: true,
+    template:
+      '✅ لديك حجز جديد\n👤 {{name}}\n📞 {{phone}}\n📍 {{neighborhood}}\n🕐 {{slot}}\n\nافتح تطبيق السائق واضغط قبول المهمة',
+  },
+  driver_accepted: {
+    enabled: true,
+    template:
+      '🚗 سائقك في الطريق إليك!\n👨‍💼 السائق: {{driverName}}\n🕐 الوقت: {{slot}}\nسيصل قريباً. شكراً لاختيارك WashTech! 🧼',
+  },
+  booking_rejected: {
+    enabled: true,
+    template:
+      '❌ عذراً، لم نتمكن من قبول حجزك في هذا الوقت.\nيرجى المحاولة مرة أخرى أو اختيار وقت آخر.\nWashTech 🚗',
+  },
+};
+
+function applyTemplate(template: string, vars: Record<string, string>): string {
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? `{{${key}}}`);
+}
+
+async function getTemplates(): Promise<NotificationTemplates> {
+  try {
+    const snap = await getDoc(doc(db, 'settings', 'notification_templates'));
+    return snap.exists() ? (snap.data() as any).value : DEFAULT_TEMPLATES;
+  } catch { return DEFAULT_TEMPLATES; }
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
   app.use(express.json());
 
-  // Single n8n webhook — all events go here with an `event` field
-  const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL
-    || 'https://fahad97.app.n8n.cloud/webhook/washtech';
-  console.log(`[n8n] Webhook URL: ${N8N_WEBHOOK_URL}`);
+  const WASENDER_TOKEN = process.env.WASENDER_API_TOKEN || '';
+  const MANAGER_PHONE  = process.env.MANAGER_PHONE || '+9647809471576';
 
-  async function notifyN8n(event: string, data: Record<string, unknown>) {
+  async function sendWhatsApp(to: string, text: string): Promise<void> {
+    if (!WASENDER_TOKEN) { console.warn('[WhatsApp] No WASENDER_API_TOKEN set'); return; }
     try {
-      await fetch(N8N_WEBHOOK_URL, {
+      const res = await fetch('https://wasenderapi.com/api/send-message', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event, ...data }),
+        headers: { Authorization: `Bearer ${WASENDER_TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to, text }),
       });
-    } catch (e) { console.error('[n8n]', e); }
+      if (!res.ok) console.error('[WhatsApp] Error', res.status, await res.text());
+    } catch (e) { console.error('[WhatsApp]', e); }
+  }
+
+  async function notify(event: EventKey, vars: Record<string, string>, to: string): Promise<void> {
+    const templates = await getTemplates();
+    const cfg = templates[event];
+    if (!cfg?.enabled) return;
+    const text = applyTemplate(cfg.template, vars);
+    sendWhatsApp(to, text).catch(console.error);
   }
 
   // Slots stay in memory (they're reset on deploy anyway; admin can update via /api/update-slots)
@@ -94,17 +153,15 @@ async function startServer() {
     }
   });
 
-  // 4. Proxy for n8n — forwards new_booking event via POST JSON
+  // 4. Called by BookingPage after saving to Firestore — sends manager WhatsApp notification
   app.post('/api/proxy-n8n', async (req, res) => {
-    try {
-      const payload = { event: 'new_booking', ...req.body };
-      console.log('[n8n] Forwarding new_booking:', payload.id || '');
-      await notifyN8n('new_booking', req.body);
-      res.json({ success: true });
-    } catch (error) {
-      console.error('[n8n] proxy-n8n error:', error);
-      res.status(500).json({ success: false, error: 'Failed to reach n8n' });
-    }
+    const d = req.body;
+    notify('new_booking', {
+      id: d.id || '', name: d.name || '', phone: d.phone || '',
+      neighborhood: d.neighborhood || '', carType: d.carType || '',
+      package: d.package || '', date: d.date === 'today' ? 'اليوم' : 'غداً', slot: d.slot || '',
+    }, MANAGER_PHONE).catch(console.error);
+    res.json({ success: true });
   });
 
   // 3. (legacy stub — bookings now live in Firestore, read via onSnapshot in frontend)
@@ -115,13 +172,20 @@ async function startServer() {
   // --- Manager Endpoints ---
 
   // Health check
-  app.get('/api/health', async (_req, res) => {
-    let n8nReachable = false;
-    try {
-      const testRes = await fetch(N8N_WEBHOOK_URL, { method: 'GET', signal: AbortSignal.timeout(5000) });
-      n8nReachable = testRes.status !== 0;
-    } catch (_) {}
-    res.json({ status: 'ok', codeVersion: '3.0-firestore', n8nWebhookUrl: N8N_WEBHOOK_URL, n8nReachable });
+  app.get('/api/health', (_req, res) => {
+    res.json({ status: 'ok', codeVersion: '3.0-direct-whatsapp', wasender: !!WASENDER_TOKEN });
+  });
+
+  // --- Notification template endpoints ---
+  app.get('/api/admin/notification-templates', async (_req, res) => {
+    res.json({ templates: await getTemplates() });
+  });
+
+  app.post('/api/admin/notification-templates', async (req, res) => {
+    const { templates } = req.body;
+    if (!templates) return res.status(400).json({ error: 'Missing templates' });
+    await setDoc(doc(db, 'settings', 'notification_templates'), { value: templates });
+    res.json({ success: true });
   });
 
   app.post('/api/manager/login', (req, res) => {
@@ -162,7 +226,12 @@ async function startServer() {
 
   // Legacy /api/webhook — kept for any old integrations
   app.post('/api/webhook', async (req, res) => {
-    notifyN8n('new_booking', req.body).catch(console.error);
+    const d = req.body;
+    notify('new_booking', {
+      id: d.id || '', name: d.name || '', phone: d.phone || '',
+      neighborhood: d.neighborhood || '', carType: d.carType || '',
+      package: d.package || '', date: d.date === 'today' ? 'اليوم' : 'غداً', slot: d.slot || '',
+    }, MANAGER_PHONE).catch(console.error);
     res.json({ success: true });
   });
 
@@ -184,19 +253,20 @@ async function startServer() {
         });
         const driverSnap = await getDoc(doc(db, 'drivers', driverId));
         const driver = driverSnap.exists() ? (driverSnap.data() as any) : { name: 'السائق', phone: '' };
-        notifyN8n('booking_approved', {
-          bookingId, driverId,
-          driverName: driver.name,
-          driverPhone: driver.phone,
-          ...booking,
-        }).catch(console.error);
+        notify('booking_approved', {
+          name: booking.name || '', phone: booking.phone || '',
+          neighborhood: booking.neighborhood || '', slot: booking.slot || '',
+          driverName: driver.name, driverPhone: driver.phone || '',
+        }, driver.phone || MANAGER_PHONE).catch(console.error);
 
       } else if (action === 'reject') {
         await updateDoc(bookingRef, {
           status: 'rejected',
           rejectedAt: new Date().toISOString(),
         });
-        notifyN8n('booking_rejected', { bookingId, ...booking }).catch(console.error);
+        notify('booking_rejected', {
+          name: booking.name || '', phone: booking.phone || '',
+        }, booking.phone || '').catch(console.error);
       }
 
       res.json({ success: true });
@@ -233,13 +303,12 @@ async function startServer() {
       });
 
       const booking = bookingSnap.data() as Record<string, any>;
-      notifyN8n('booking_approved', {
-        bookingId: targetId,
-        driverId: firstDriver?.id || 'default',
-        driverName: firstDriver?.data().name || 'السائق',
-        driverPhone: firstDriver?.data().phone || '',
-        ...booking,
-      }).catch(console.error);
+      const driverData = firstDriver?.data() as any;
+      notify('booking_approved', {
+        name: booking.name || '', phone: booking.phone || '',
+        neighborhood: booking.neighborhood || '', slot: booking.slot || '',
+        driverName: driverData?.name || 'السائق', driverPhone: driverData?.phone || '',
+      }, driverData?.phone || MANAGER_PHONE).catch(console.error);
 
       res.send(`
         <html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Approved!</title></head>
@@ -307,19 +376,16 @@ async function startServer() {
       const bookingRef = doc(db, 'bookings', bookingId);
       await updateDoc(bookingRef, { status: 'on_process', acceptedAt: new Date().toISOString() });
 
-      // Notify customer via n8n
+      // Notify customer via WasenderAPI
       const bookingSnap = await getDoc(bookingRef);
       if (bookingSnap.exists() && driverId) {
         const booking = bookingSnap.data() as Record<string, any>;
         const driverSnap = await getDoc(doc(db, 'drivers', driverId));
         const driver = driverSnap.exists() ? (driverSnap.data() as any) : { name: 'السائق' };
-        notifyN8n('driver_accepted', {
-          bookingId,
-          driverName: driver.name,
-          phone: booking.phone,
-          slot: booking.slot,
-          language: booking.language,
-        }).catch(console.error);
+        notify('driver_accepted', {
+          name: booking.name || '', phone: booking.phone || '',
+          driverName: driver.name, slot: booking.slot || '',
+        }, booking.phone || '').catch(console.error);
       }
 
       res.json({ success: true });
