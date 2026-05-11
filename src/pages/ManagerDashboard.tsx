@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Car, CheckCircle2, Clock, MapPin, User, Check, X, ChevronDown, Tag } from 'lucide-react';
+import { Car, CheckCircle2, Clock, MapPin, User, Check, X, ChevronDown, Tag, DollarSign, Truck, History } from 'lucide-react';
 import { i18n, Language } from '../translations';
 
 
@@ -103,46 +103,31 @@ export default function ManagerDashboard() {
     }
   };
 
-  const [newDriverName, setNewDriverName] = useState('');
-  const [newDriverCode, setNewDriverCode] = useState('');
+  const [newDriverName,  setNewDriverName]  = useState('');
+  const [newDriverCode,  setNewDriverCode]  = useState('');
+  const [newDriverPhone, setNewDriverPhone] = useState('');
 
   // ── Notification templates ────────────────────────────────────
-  type EventKey = 'new_booking' | 'booking_approved' | 'driver_accepted' | 'booking_rejected';
+  type EventKey = 'new_booking' | 'booking_approved' | 'driver_accepted' | 'booking_rejected' | 'captain_on_road' | 'booking_completed';
   interface TemplateConfig { enabled: boolean; template: string; }
   type Templates = Record<EventKey, TemplateConfig>;
 
   const EVENT_META: { key: EventKey; labelAr: string; labelKu: string; recipientAr: string; recipientKu: string; vars: string[] }[] = [
-    {
-      key: 'new_booking',
-      labelAr: '📦 حجز جديد', labelKu: '📦 حجزی نوێ',
-      recipientAr: 'يُرسل إلى: المدير', recipientKu: 'دەنێردرێت بۆ: بەڕێوەبەر',
-      vars: ['id','name','phone','neighborhood','carType','package','date','slot'],
-    },
-    {
-      key: 'booking_approved',
-      labelAr: '✅ حجز مُوافق عليه', labelKu: '✅ حجزی پەسەندکراو',
-      recipientAr: 'يُرسل إلى: السائق', recipientKu: 'دەنێردرێت بۆ: شۆفێر',
-      vars: ['name','phone','neighborhood','slot','driverName','driverPhone'],
-    },
-    {
-      key: 'driver_accepted',
-      labelAr: '🚗 السائق في الطريق', labelKu: '🚗 شۆفێر لە ڕێگایە',
-      recipientAr: 'يُرسل إلى: العميل', recipientKu: 'دەنێردرێت بۆ: کڕیار',
-      vars: ['name','phone','driverName','slot'],
-    },
-    {
-      key: 'booking_rejected',
-      labelAr: '❌ حجز مرفوض', labelKu: '❌ حجزی ڕەتکراو',
-      recipientAr: 'يُرسل إلى: العميل', recipientKu: 'دەنێردرێت بۆ: کڕیار',
-      vars: ['name','phone'],
-    },
+    { key: 'new_booking',       labelAr: '📦 حجز جديد',            labelKu: '📦 حجزی نوێ',          recipientAr: 'يُرسل إلى: المدير',  recipientKu: 'دەنێردرێت بۆ: بەڕێوەبەر', vars: ['id','name','phone','neighborhood','carType','package','date','slot','approveLink','rejectLink'] },
+    { key: 'booking_approved',  labelAr: '✅ حجز مُوافق عليه',     labelKu: '✅ حجزی پەسەندکراو',   recipientAr: 'يُرسل إلى: الكابتن', recipientKu: 'دەنێردرێت بۆ: شۆفێر',      vars: ['name','phone','neighborhood','slot','driverName','driverPhone','acceptLink'] },
+    { key: 'driver_accepted',   labelAr: '🚗 الكابتن قبل المهمة',  labelKu: '🚗 شۆفێر قبوڵی ئەرک', recipientAr: 'يُرسل إلى: العميل',  recipientKu: 'دەنێردرێت بۆ: کڕیار',       vars: ['name','phone','driverName','slot'] },
+    { key: 'captain_on_road',   labelAr: '🚀 الكابتن في الطريق',   labelKu: '🚀 شۆفێر لە ڕێگایە',   recipientAr: 'يُرسل إلى: العميل',  recipientKu: 'دەنێردرێت بۆ: کڕیار',       vars: ['name','phone','driverName','slot'] },
+    { key: 'booking_completed', labelAr: '✅ اكتملت الخدمة',       labelKu: '✅ خزمەتگوزاری تەواو',  recipientAr: 'يُرسل إلى: العميل',  recipientKu: 'دەنێردرێت بۆ: کڕیار',       vars: ['name','phone','amount'] },
+    { key: 'booking_rejected',  labelAr: '❌ حجز مرفوض',           labelKu: '❌ حجزی ڕەتکراو',       recipientAr: 'يُرسل إلى: العميل',  recipientKu: 'دەنێردرێت بۆ: کڕیار',       vars: ['name','phone'] },
   ];
 
   const DEFAULT_TEMPLATES: Templates = {
-    new_booking:      { enabled: true, template: '📦 حجز جديد #{{id}}\n👤 {{name}}\n📞 {{phone}}\n📍 {{neighborhood}}\n🚗 {{carType}} — {{package}}\n🕐 {{date}} {{slot}}' },
-    booking_approved: { enabled: true, template: '✅ لديك حجز جديد\n👤 {{name}}\n📞 {{phone}}\n📍 {{neighborhood}}\n🕐 {{slot}}\n\nافتح تطبيق السائق واضغط قبول المهمة' },
-    driver_accepted:  { enabled: true, template: '🚗 سائقك في الطريق إليك!\n👨‍💼 السائق: {{driverName}}\n🕐 الوقت: {{slot}}\nسيصل قريباً. شكراً لاختيارك WashTech! 🧼' },
-    booking_rejected: { enabled: true, template: '❌ عذراً، لم نتمكن من قبول حجزك في هذا الوقت.\nيرجى المحاولة مرة أخرى أو اختيار وقت آخر.\nWashTech 🚗' },
+    new_booking:       { enabled: true, template: '📦 حجز جديد #{{id}}\n👤 {{name}}\n📞 {{phone}}\n📍 {{neighborhood}}\n🚗 {{carType}} — {{package}}\n🕐 {{date}} {{slot}}\n\n✅ موافقة: {{approveLink}}\n❌ رفض: {{rejectLink}}' },
+    booking_approved:  { enabled: true, template: '✅ مهمة جديدة لك\n👤 {{name}}\n📞 {{phone}}\n📍 {{neighborhood}}\n🕐 {{slot}}\n\n👆 قبول المهمة: {{acceptLink}}' },
+    driver_accepted:   { enabled: true, template: '🚗 الكابتن قبل مهمتك!\n👨‍💼 الكابتن: {{driverName}}\n🕐 الوقت: {{slot}}\nسيصل قريباً. شكراً لاختيارك WashTech! 🧼' },
+    captain_on_road:   { enabled: true, template: '🚀 الكابتن في الطريق إليك!\n👨‍💼 {{driverName}}\n🕐 الوقت: {{slot}}\nاستعد لاستقباله. شكراً! 🧼' },
+    booking_completed: { enabled: true, template: '✅ تم الانتهاء من خدمة غسيل سيارتك!\n💰 المبلغ: {{amount}} د.ع\nشكراً لاختيارك WashTech 🧼\nقيّم تجربتك: ⭐⭐⭐⭐⭐' },
+    booking_rejected:  { enabled: true, template: '❌ عذراً، لم نتمكن من قبول حجزك في هذا الوقت.\nيرجى المحاولة مرة أخرى أو اختيار وقت آخر.\nWashTech 🚗' },
   };
 
   const [templates, setTemplates] = useState<Templates>(DEFAULT_TEMPLATES);
@@ -224,27 +209,31 @@ export default function ManagerDashboard() {
   const handleCreateDriver = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newDriverName || !newDriverCode) return;
-    
     try {
-      const { collection, addDoc } = await import('firebase/firestore');
-      const { db } = await import('../lib/firebase');
-      
-      await addDoc(collection(db, 'drivers'), {
-         name: newDriverName,
-         code: newDriverCode
+      const res = await fetch('/api/manager/create-driver', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newDriverName, code: newDriverCode, phone: newDriverPhone }),
       });
+      if (!res.ok) throw new Error('Failed');
       setNewDriverName('');
       setNewDriverCode('');
+      setNewDriverPhone('');
     } catch (error) {
       console.error(error);
       alert('Failed to create driver');
     }
   };
 
-  const pendingOrders = orders.filter(o => o.status === 'pending');
-  const approvedOrders = orders.filter(o => o.status === 'approved');
-  const onProcessOrders = orders.filter(o => o.status === 'on_process');
-  const completedOrders = orders.filter(o => o.status === 'completed');
+  const pendingOrders   = orders.filter(o => o.status === 'pending');
+  const approvedOrders  = orders.filter(o => o.status === 'approved');
+  const acceptedOrders  = orders.filter(o => ['accepted', 'on_process'].includes(o.status));
+  const onRoadOrders    = orders.filter(o => o.status === 'on_road');
+  const onProcessOrders = orders.filter(o => ['accepted', 'on_road', 'on_process'].includes(o.status));
+  const completedOrders = orders.filter(o => ['completed', 'closed'].includes(o.status));
+  const totalRevenue    = completedOrders.reduce((sum, o) => sum + (o.financials?.totalAmount || 0), 0);
+  const totalCaptainPay = completedOrders.reduce((sum, o) => sum + (o.financials?.captainShare || 0), 0);
+  const totalCompany    = completedOrders.reduce((sum, o) => sum + (o.financials?.companyShare || 0), 0);
 
   const searchParams = new URLSearchParams(window.location.search);
   const isSuperAdmin = searchParams.get('superadmin') === 'true';
@@ -328,18 +317,22 @@ export default function ManagerDashboard() {
           </div>
 
           {/* Stats Row */}
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-8 relative z-10">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-8 relative z-10">
             <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/10">
-              <div className="text-white/80 text-xs uppercase tracking-wider font-semibold mb-1">{t.todayOrders}</div>
-              <div className="text-2xl font-bold text-white">12</div>
-            </div>
-            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/10">
-              <div className="text-white/80 text-xs uppercase tracking-wider font-semibold mb-1">{t.activeDrivers}</div>
-              <div className="text-2xl font-bold text-white">3</div>
-            </div>
-            <div className="hidden md:block bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/10">
               <div className="text-white/80 text-xs uppercase tracking-wider font-semibold mb-1">{t.pendingApprovals}</div>
-              <div className="text-2xl font-bold text-white">{orders.length}</div>
+              <div className="text-2xl font-bold text-white">{pendingOrders.length}</div>
+            </div>
+            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/10">
+              <div className="text-white/80 text-xs uppercase tracking-wider font-semibold mb-1">{lang === 'ar' ? 'قيد التنفيذ' : 'لە جێبەجێکردندایە'}</div>
+              <div className="text-2xl font-bold text-white">{onProcessOrders.length}</div>
+            </div>
+            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/10">
+              <div className="text-white/80 text-xs uppercase tracking-wider font-semibold mb-1">{lang === 'ar' ? 'مكتمل' : 'تەواو'}</div>
+              <div className="text-2xl font-bold text-white">{completedOrders.length}</div>
+            </div>
+            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/10">
+              <div className="text-white/80 text-xs uppercase tracking-wider font-semibold mb-1">{lang === 'ar' ? 'الإيرادات' : 'داهات'}</div>
+              <div className="text-xl font-bold text-white">{totalRevenue > 0 ? `${Math.round(totalRevenue/1000)}K` : '—'}</div>
             </div>
           </div>
         </div>
@@ -451,10 +444,10 @@ export default function ManagerDashboard() {
                 </AnimatePresence>
               </div>
 
-              {/* Column 2: Wait Approval from Driver */}
+              {/* Column 2: Wait Approval from Captain */}
               <div className="w-full md:min-w-[320px] md:w-1/4 flex flex-col gap-3 snap-center shrink-0">
                 <div className="flex items-center justify-between px-2 py-1">
-                  <h2 className="text-[13px] font-bold text-gray-500 uppercase tracking-wider">{lang === 'ar' ? 'انتظار موافقة السائق' : 'چاوەڕێی شۆفێر'}</h2>
+                  <h2 className="text-[13px] font-bold text-gray-500 uppercase tracking-wider">{lang === 'ar' ? 'انتظار قبول الكابتن' : 'چاوەڕێی کابتن'}</h2>
                   <span className="bg-gray-200 text-gray-700 text-xs font-bold px-2 py-0.5 rounded-full">{approvedOrders.length}</span>
                 </div>
                 
@@ -498,10 +491,10 @@ export default function ManagerDashboard() {
                 </AnimatePresence>
               </div>
 
-              {/* Column 3: On Process by Driver */}
+              {/* Column 3: In Progress (accepted + on_road) */}
               <div className="w-full md:min-w-[320px] md:w-1/4 flex flex-col gap-3 snap-center shrink-0">
                 <div className="flex items-center justify-between px-2 py-1">
-                  <h2 className="text-[13px] font-bold text-gray-500 uppercase tracking-wider">{lang === 'ar' ? 'قيد التنفيذ (مع السائق)' : 'لە جێبەجێکردندایە (لای شۆفێر)'}</h2>
+                  <h2 className="text-[13px] font-bold text-gray-500 uppercase tracking-wider">{lang === 'ar' ? 'قيد التنفيذ' : 'لە جێبەجێکردندایە'}</h2>
                   <span className="bg-gray-200 text-gray-700 text-xs font-bold px-2 py-0.5 rounded-full">{onProcessOrders.length}</span>
                 </div>
                 
@@ -589,9 +582,16 @@ export default function ManagerDashboard() {
                         </div>
                       </div>
 
-                      <div className="mt-auto pt-3 border-t border-green-100/30 flex items-center gap-2 text-sm font-semibold text-gray-800">
-                         <User className="w-4 h-4 text-green-500" />
-                         <span className="text-[12px]">{driversList.find(d => d.id === order.driverId)?.name || 'N/A'}</span>
+                      <div className="mt-auto pt-3 border-t border-green-100/30 flex items-center justify-between gap-2 text-sm font-semibold text-gray-800">
+                         <div className="flex items-center gap-2">
+                           <User className="w-4 h-4 text-green-500" />
+                           <span className="text-[12px]">{driversList.find(d => d.id === order.driverId)?.name || 'N/A'}</span>
+                         </div>
+                         {order.financials?.totalAmount > 0 && (
+                           <span className="text-[11px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
+                             {order.financials.totalAmount.toLocaleString('ar-IQ')} د.ع
+                           </span>
+                         )}
                       </div>
                     </motion.div>
                   ))}
@@ -602,8 +602,95 @@ export default function ManagerDashboard() {
           )}
 
           {activeTab === 'expenses' && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center py-20 text-gray-500 font-medium">
-               {t.expensesTab} ({t.comingSoon})
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="pb-32 space-y-6">
+              <h2 className="text-xl font-bold text-gray-900 mt-2">{lang === 'ar' ? 'التقرير المالي' : 'ڕاپۆرتی دارایی'}</h2>
+
+              {/* Revenue Summary */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {[
+                  { label: lang === 'ar' ? 'إجمالي الإيرادات' : 'کۆی داهات', value: totalRevenue, color: 'text-green-600', bg: 'bg-green-50' },
+                  { label: lang === 'ar' ? 'حصة الكباتن (70%)' : 'پارەی کابتن', value: totalCaptainPay, color: 'text-blue-600', bg: 'bg-blue-50' },
+                  { label: lang === 'ar' ? 'حصة الشركة (30%)' : 'پارەی کۆمپانیا', value: totalCompany, color: 'text-purple-600', bg: 'bg-purple-50' },
+                ].map(item => (
+                  <div key={item.label} className={`rounded-2xl p-5 border ${item.bg} border-gray-100`}>
+                    <p className="text-xs font-bold text-gray-500 mb-2">{item.label}</p>
+                    <p className={`text-2xl font-bold ${item.color}`}>{item.value.toLocaleString('ar-IQ')}</p>
+                    <p className="text-xs text-gray-400 mt-1">د.ع</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Completed bookings with financials */}
+              <div>
+                <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">{lang === 'ar' ? 'الحجوزات المكتملة' : 'حجزە تەواوبووەکان'}</h3>
+                {completedOrders.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-gray-100 p-8 text-center text-gray-400">{lang === 'ar' ? 'لا توجد حجوزات مكتملة بعد' : 'هیچ حجزێکی تەواوبوو نییە'}</div>
+                ) : (
+                  <div className="space-y-3">
+                    {completedOrders.map(o => (
+                      <div key={o.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-bold text-gray-900">{o.name}</p>
+                            <p className="text-xs text-gray-400 font-mono mt-0.5">#{o.id.slice(-8).toUpperCase()}</p>
+                          </div>
+                          {o.financials?.totalAmount ? (
+                            <div className="text-right">
+                              <p className="font-bold text-green-600">{o.financials.totalAmount.toLocaleString('ar-IQ')} د.ع</p>
+                              <p className="text-xs text-gray-400">كابتن: {(o.financials.captainShare || 0).toLocaleString('ar-IQ')}</p>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded">—</span>
+                          )}
+                        </div>
+                        <div className="mt-2 flex items-center gap-3 text-xs text-gray-500">
+                          <span>{o.neighborhood}</span>
+                          <span>·</span>
+                          <span>{o.package}</span>
+                          <span>·</span>
+                          <span>{driversList.find(d => d.id === o.driverId)?.name || '—'}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Captain wallets */}
+              <div>
+                <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                  <DollarSign className="w-3.5 h-3.5" />{lang === 'ar' ? 'محافظ الكباتن' : 'جزدانی کابتنەکان'}
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {driversList.map(d => (
+                    <div key={d.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="w-10 h-10 bg-blue-50 rounded-full flex items-center justify-center">
+                          <User className="w-5 h-5 text-[#0050B3]" />
+                        </div>
+                        <div>
+                          <p className="font-bold text-gray-900">{d.name}</p>
+                          <p className="text-xs text-gray-400">كود: {d.code}</p>
+                        </div>
+                      </div>
+                      {d.wallet ? (
+                        <div className="grid grid-cols-2 gap-2 text-sm">
+                          <div className="bg-green-50 rounded-xl p-2.5">
+                            <p className="text-xs text-gray-500">الرصيد</p>
+                            <p className="font-bold text-green-700">{(d.wallet.balance || 0).toLocaleString('ar-IQ')}</p>
+                          </div>
+                          <div className="bg-blue-50 rounded-xl p-2.5">
+                            <p className="text-xs text-gray-500">إجمالي</p>
+                            <p className="font-bold text-blue-700">{(d.wallet.totalEarned || 0).toLocaleString('ar-IQ')}</p>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-400">لا توجد بيانات محفظة</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
             </motion.div>
           )}
 
@@ -631,8 +718,8 @@ export default function ManagerDashboard() {
                     />
                   </div>
                   <div>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       placeholder={t.driverCode}
                       value={newDriverCode}
                       onChange={e => setNewDriverCode(e.target.value)}
@@ -641,7 +728,17 @@ export default function ManagerDashboard() {
                       dir="ltr"
                     />
                   </div>
-                  <button 
+                  <div>
+                    <input
+                      type="tel"
+                      placeholder={lang === 'ar' ? 'رقم واتساب (07XXXXXXXXXX)' : 'ژمارەی واتساپ'}
+                      value={newDriverPhone}
+                      onChange={e => setNewDriverPhone(e.target.value)}
+                      className="w-full bg-gray-50 border border-gray-200 text-gray-900 rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-[#007AFF]/20 focus:border-[#007AFF] transition-all"
+                      dir="ltr"
+                    />
+                  </div>
+                  <button
                     type="submit"
                     className="w-full py-3 bg-[#007AFF] text-white font-semibold rounded-xl hover:bg-blue-600 shadow-lg shadow-blue-500/30 active:scale-95 transition-all"
                   >
@@ -662,6 +759,14 @@ export default function ManagerDashboard() {
                            <span>Code:</span>
                            <span className="font-mono bg-gray-50 px-2 py-0.5 rounded text-gray-700 font-semibold tracking-widest">{driver.code || 'N/A'}</span>
                         </div>
+                        {driver.phone && (
+                          <div className="text-gray-400 text-xs" dir="ltr">{driver.phone}</div>
+                        )}
+                        {driver.wallet && (
+                          <div className="mt-2 bg-green-50 rounded-xl px-3 py-1.5 text-xs text-green-700 font-semibold">
+                            رصيد: {(driver.wallet.balance || 0).toLocaleString('ar-IQ')} د.ع
+                          </div>
+                        )}
                     </div>
                  ))}
               </div>
@@ -787,21 +892,33 @@ export default function ManagerDashboard() {
         </div>
 
         {/* Global Navigation Bar */}
-        <div className="fixed md:absolute bottom-0 inset-x-0 bg-white/90 backdrop-blur-xl border-t border-gray-200/50 pb-safe pt-2 px-4 flex justify-around shadow-[0_-10px_40px_rgba(0,0,0,0.05)] z-50">
-           <button type="button" onClick={() => setActiveTab('orders')} className={`flex flex-col items-center gap-1 p-2 w-20 transition-opacity ${activeTab === 'orders' ? 'opacity-100' : 'opacity-40 hover:opacity-70'}`}>
-             <svg className={`w-7 h-7 ${activeTab === 'orders' ? 'text-[#007AFF]' : 'text-gray-900'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
-             <span className={`text-xs font-bold tracking-wide ${activeTab === 'orders' ? 'text-[#007AFF]' : 'text-gray-900'}`}>{t.ordersTab}</span>
-           </button>
-           <button type="button" onClick={() => setActiveTab('drivers')} className={`flex flex-col items-center gap-1 p-2 w-20 transition-opacity ${activeTab === 'drivers' ? 'opacity-100' : 'opacity-40 hover:opacity-70'}`}>
-             <svg className={`w-7 h-7 ${activeTab === 'drivers' ? 'text-[#007AFF]' : 'text-gray-900'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
-             <span className={`text-xs font-bold tracking-wide ${activeTab === 'drivers' ? 'text-[#007AFF]' : 'text-gray-900'}`}>{t.driversTab}</span>
-           </button>
-           <button type="button" onClick={() => setActiveTab('notifications')} className={`flex flex-col items-center gap-1 p-2 w-20 transition-opacity ${activeTab === 'notifications' ? 'opacity-100' : 'opacity-40 hover:opacity-70'}`}>
-             <svg className={`w-7 h-7 ${activeTab === 'notifications' ? 'text-[#007AFF]' : 'text-gray-900'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
-             <span className={`text-xs font-bold tracking-wide ${activeTab === 'notifications' ? 'text-[#007AFF]' : 'text-gray-900'}`}>{t.notificationsTab}</span>
-           </button>
+        <div className="fixed md:absolute bottom-0 inset-x-0 bg-white/90 backdrop-blur-xl border-t border-gray-200/50 pb-safe pt-2 px-2 flex justify-around shadow-[0_-10px_40px_rgba(0,0,0,0.05)] z-50">
+           <NavBtn active={activeTab === 'orders'} onClick={() => setActiveTab('orders')} label={t.ordersTab}>
+             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+           </NavBtn>
+           <NavBtn active={activeTab === 'expenses'} onClick={() => setActiveTab('expenses')} label={t.expensesTab}>
+             <DollarSign className="w-6 h-6" />
+           </NavBtn>
+           <NavBtn active={activeTab === 'drivers'} onClick={() => setActiveTab('drivers')} label={t.driversTab}>
+             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+           </NavBtn>
+           <NavBtn active={activeTab === 'notifications'} onClick={() => setActiveTab('notifications')} label={t.notificationsTab}>
+             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
+           </NavBtn>
         </div>
       </div>
     </div>
+  );
+}
+
+function NavBtn({ active, onClick, label, children }: {
+  active: boolean; onClick: () => void; label: string; children: React.ReactNode;
+}) {
+  return (
+    <button type="button" onClick={onClick}
+      className={`flex flex-col items-center gap-0.5 p-2 min-w-[56px] transition-opacity ${active ? 'opacity-100' : 'opacity-40 hover:opacity-70'}`}>
+      <span className={active ? 'text-[#007AFF]' : 'text-gray-900'}>{children}</span>
+      <span className={`text-[10px] font-bold tracking-wide ${active ? 'text-[#007AFF]' : 'text-gray-900'}`}>{label}</span>
+    </button>
   );
 }
